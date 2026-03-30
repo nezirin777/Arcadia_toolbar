@@ -4,7 +4,7 @@
 // @description        小説の体裁を操作できるバーがＰＯＰしてくれます。(Arcadia専用)
 // @include                http://www.mai-net.net/bbs/*
 // @include                http://mai-net.ath.cx/bbs/*
-// @version                3.00
+// @version                4.00
 // ==/UserScript==
 
 // 機能設定の定義
@@ -97,6 +97,47 @@ function deepFreeze(obj) {
     return Object.freeze(obj);
 }
 
+function ensureStyleElement(styleId, cssText) {
+  const existing = document.getElementById(styleId);
+
+  if (existing && existing.tagName === 'STYLE') {
+    // 既にあるなら再利用（CSSが変わっていたら更新）
+    if (existing.textContent !== cssText) existing.textContent = cssText;
+    return existing;
+  }
+
+  const styleEl = document.createElement('style');
+  styleEl.id = styleId;
+  styleEl.textContent = cssText;
+
+  const parent = document.head || document.documentElement;
+  parent.appendChild(styleEl);
+
+  return styleEl;
+}
+
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null) continue;
+
+    if (k === "class") node.className = v;
+    else if (k === "dataset") Object.assign(node.dataset, v);
+    else if (k === "style") Object.assign(node.style, v);
+    else if (k === "text") node.textContent = v;
+    else if (k === "htmlFor") node.htmlFor = v;
+    else if (k in node) node[k] = v;
+    else node.setAttribute(k, String(v));
+  }
+
+  for (const c of children.flat()) {
+    if (c == null) continue;
+    node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+  }
+  return node;
+}
+
 //検索バー
 class NovelSearchBar {
     static #SEARCH_CONFIGS = {
@@ -168,7 +209,7 @@ class NovelSearchBar {
     #searchPanel;            // 検索パネルの要素
     #toggleButton;           // 検索バーの表示/非表示を切り替えるボタン
     #isInitialized = false;  // 初期化済みフラグ
-    #formCache = new Map();  // 検索フォームのキャッシュ
+    #formElCache = new Map();
 
     // コンストラクタ: 設定を受け取り、イミュータブル化して初期化
     constructor(config) {
@@ -178,100 +219,140 @@ class NovelSearchBar {
         this.#toggleButton = null;
     }
 
-    // 検索フォームのHTMLを生成する共通メソッド
-    #createSearchForm(type) {
-        if (this.#formCache.has(type)) return this.#formCache.get(type);
-
-        const baseConfig = NovelSearchBar.#SEARCH_CONFIGS.base;
-        const config = { ...baseConfig, ...NovelSearchBar.#SEARCH_CONFIGS[type] };
-        if (!config) return '';
-
-        const hiddenInputs = config.hiddenInputs
-            .map(({ name, value }) => `<input type="hidden" name="${name}" value="${value}">`)
-            .join('');
-
-        const optionsHTML = config.options ? `
-            <select name="${config.options.name}" class="search-select" title="検索オプション">
-                ${config.options.items.map(opt =>
-                    `<option value="${opt.value}"${opt.value === config.options.default ? ' selected' : ''}>${opt.label}</option>`
-                ).join('')}
-            </select>
-        ` : '';
-
-        const formHTML = `
-            <form method="${config.method}" action="${config.action}" target="${config.target}" class="search-form">
-                ${hiddenInputs}
-                ${optionsHTML}
-                <input type="text" name="${config.searchParam}" class="search-input" title="検索ワード入力">
-                <button type="submit" class="search-button">${config.buttonText}</button>
-            </form>
-        `;
-
-        this.#formCache.set(type, formHTML);
-        return formHTML;
-    }
-
     // 検索パネルの表示/非表示を切り替え
     #toggleSearchPanel = () => {
-        if (!this.#searchPanel) return; // パネルが未生成なら何もしない
-        this.#searchPanel.style.display = this.#searchPanel.style.display === 'block' ? 'none' : 'block';
-    }
-
-    // イベントハンドリングをデバウンス処理で制限
-    #debounce(func, wait = 400) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait); // 指定時間後に実行
-        };
-    }
+      if (!this.#searchPanel) return;
+      this.#searchPanel.classList.toggle('is-open');
+    };
 
     // DOM要素を生成しイベントリスナーを一括設定
     #initializeDOM() {
-        if (this.#container) return;
+      if (this.#container) return;
 
-        const fragment = document.createDocumentFragment();
-        this.#container = document.createElement('div');
-        this.#container.className = 'search-bar-container';
+      const fragment = document.createDocumentFragment();
 
-        this.#toggleButton = document.createElement('button');
-        this.#toggleButton.className = 'search-toggle-button';
-        this.#toggleButton.textContent = '検索';
-        this.#toggleButton.title = '検索バーの表示／非表示';
+      this.#container = document.createElement('div');
+      this.#container.className = 'search-bar-container';
 
-        this.#searchPanel = document.createElement('div');
-        this.#searchPanel.className = 'search-bar-panel';
-        this.#searchPanel.innerHTML = `
-            <button class="close-button" title="検索バーを閉じる">×</button>
-            ${this.#createSearchForm('arcadia')}
-            ${this.#createSearchForm('narou')}
-            ${this.#createSearchForm('hameln')}
-        `;
+      this.#toggleButton = document.createElement('button');
+      this.#toggleButton.className = 'search-toggle-button';
+      this.#toggleButton.textContent = '検索';
+      this.#toggleButton.title = '検索バーの表示／非表示';
 
-        this.#container.append(this.#toggleButton, this.#searchPanel);
-        fragment.appendChild(this.#container);
+      this.#searchPanel = document.createElement('div');
+      this.#searchPanel.className = 'search-bar-panel';
 
-        this.#toggleButton.addEventListener('click', this.#toggleSearchPanel);
-        const closeButton = this.#searchPanel.querySelector('.close-button');
-        closeButton?.addEventListener('click', this.#toggleSearchPanel);
+      // close button（元と同じ class/title/表示）
+      const closeButton = document.createElement('button');
+      closeButton.className = 'close-button';
+      closeButton.title = '検索バーを閉じる';
+      closeButton.type = 'button';
+      closeButton.textContent = '×';
+      this.#searchPanel.appendChild(closeButton);
 
-        const debouncedSubmit = this.#debounce((e) => {
-            const input = e.target.querySelector('.search-input');
-            if (!input?.value.trim()) {
-                e.preventDefault();
-                return;
-            }
-        }, 400);
+      // 元の #createSearchForm('...') と同じ内容のフォームをDOMで追加
+      const forms = [];
+      for (const type of ['arcadia', 'narou', 'hameln']) {
+        const form = this.#createSearchFormElement(type);
+        if (!form) continue;
+        this.#searchPanel.appendChild(form);
+        forms.push(form);
+      }
 
-        this.#searchPanel.querySelectorAll('.search-form').forEach(form => {
-            form.addEventListener('submit', debouncedSubmit);
-        });
+      // 先にハンドラ定義（元の挙動維持）
+      const onSubmit = (e) => {
+        const input = e.target.querySelector('.search-input');
+        if (!input || !input.value.trim()) e.preventDefault();
+      };
 
-        requestAnimationFrame(() => document.body.appendChild(fragment));
+      // close button
+      closeButton.addEventListener('click', this.#toggleSearchPanel);
+
+      // submit handlers（高速寄り＆一括）
+      for (const form of forms) form.addEventListener('submit', onSubmit);
+
+      // toggle button
+      this.#toggleButton.addEventListener('click', this.#toggleSearchPanel);
+
+      this.#container.append(this.#toggleButton, this.#searchPanel);
+      fragment.appendChild(this.#container);
+
+      const mount = () => {
+        if (document.body) document.body.appendChild(fragment);
+      };
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', mount, { once: true });
+      } else {
+        mount();
+      }
+    }
+
+    #createSearchFormElement(type) {
+      // element cache（HTML文字列キャッシュの代わり）
+      if (!this.#formElCache) this.#formElCache = new Map();
+      const cached = this.#formElCache.get(type);
+      if (cached) return cached.cloneNode(true); // cloneして返す（イベントは後で付ける）
+
+      const baseConfig = NovelSearchBar.#SEARCH_CONFIGS.base;
+      const typeConfig = NovelSearchBar.#SEARCH_CONFIGS[type];
+      if (!typeConfig) return null;
+
+      const config = { ...baseConfig, ...typeConfig };
+
+      const form = document.createElement('form');
+      form.method = config.method;
+      form.action = config.action;
+      form.target = config.target;
+      form.className = 'search-form';
+
+      // hidden inputs（元の順序を維持）
+      if (Array.isArray(config.hiddenInputs)) {
+        for (const { name, value } of config.hiddenInputs) {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = name;
+          input.value = value;
+          form.appendChild(input);
+        }
+      }
+
+      // options（元と同じ title / class / default selected）
+      if (config.options) {
+        const select = document.createElement('select');
+        select.name = config.options.name;
+        select.className = 'search-select';
+        select.title = '検索オプション';
+
+        for (const opt of config.options.items) {
+          const option = document.createElement('option');
+          option.value = opt.value;
+          option.textContent = opt.label;
+          if (opt.value === config.options.default) option.selected = true;
+          select.appendChild(option);
+        }
+
+        form.appendChild(select);
+      }
+
+      // search input（title一致）
+      const text = document.createElement('input');
+      text.type = 'text';
+      text.name = config.searchParam;
+      text.className = 'search-input';
+      text.title = '検索ワード入力';
+      form.appendChild(text);
+
+      // submit button
+      const btn = document.createElement('button');
+      btn.type = 'submit';
+      btn.className = 'search-button';
+      btn.textContent = config.buttonText;
+      form.appendChild(btn);
+
+      // cache “雛形” を保持
+      this.#formElCache.set(type, form.cloneNode(true));
+      return form;
     }
 
     // 検索バーを初期化
@@ -294,14 +375,14 @@ class NovelSearchBar {
 
 //検索バースタイル設定
 class NovelSearchBarStyles {
+
     static #styleElement = null;
     static #isInitialized = false;
+
     static init() {
         if (this.#styleElement) return;
 
-        this.#styleElement = document.createElement('style');
-        this.#styleElement.id = 'novel-search-styles';
-        this.#styleElement.textContent = `
+        const cssText = `
             /* ベーステーマ（ライト） */
             :root {
                 /* 共通変数 */
@@ -348,6 +429,7 @@ class NovelSearchBarStyles {
             .search-toggle-button:hover {
                 background-color: var(--search-button-hover);
             }
+            .search-bar-panel.is-open { display: block; }
             .search-bar-panel {
                 display: none;
                 background-color: var(--search-bg);
@@ -409,9 +491,11 @@ class NovelSearchBarStyles {
                 color: var(--search-close-hover);
             }
         `;
-        document.head.appendChild(this.#styleElement);
+
+        this.#styleElement = ensureStyleElement('novel-search-styles', cssText);
         this.#isInitialized = true;
     }
+
     static isInitialized() {
         return this.#isInitialized;
     }
@@ -431,11 +515,11 @@ class ListFormatter {
     }
 
     static #linkPatterns = {
-        skipXXXWarning: { pattern: /act=18attention/ig, replacement: 'act=list&cate=18&page=1', target: 'href' },
-        removeTestBoard: { pattern: /テスト板/ig, replacement: '', target: 'text' },
-        openSSInNewTab: { pattern: /(count=1)/ig, replacement: '$1', attr: 'target', value: '_blank', target: 'href' },
-        skipSearchWarning: { pattern: /sss\.php/ig, replacement: 'sss.php?act=list&cate=all&page=1', target: 'href' },
-        skipMainWarning: { pattern: /mainbbs\.php/ig, replacement: 'mainbbs.php?act=list&cate=all&page=1', target: 'href' },
+        skipXXXWarning: { pattern: /act=18attention/i, replacement: 'act=list&cate=18&page=1', target: 'href' },
+        removeTestBoard: { pattern: /テスト板/i, replacement: '', target: 'text' },
+        openSSInNewTab: { pattern: /(count=1)/i, replacement: '$1', attr: 'target', value: '_blank', target: 'href' },
+        skipSearchWarning: { pattern: /sss\.php/i, replacement: 'sss.php?act=list&cate=all&page=1', target: 'href' },
+        skipMainWarning: { pattern: /mainbbs\.php/i, replacement: 'mainbbs.php?act=list&cate=all&page=1', target: 'href' },
     };
 
     // ページ情報を取得
@@ -530,119 +614,188 @@ class ListFormatter {
 
     // ssList専用：従来の安定した横並びレイアウトを維持
     #reconstructSsListTable() {
-        const tables = document.getElementsByTagName('table');
-        // ssListでは通常2番目（0-based）がリストテーブル（広告やヘッダーの後）
-        const tableIndex = this.pageInfo.isCategory18 ? 1 :2
+      const tables = document.getElementsByTagName('table');
+      const tableIndex = this.pageInfo.isCategory18 ? 1 : 2;
 
-        if (tables.length <= tableIndex || !tables[tableIndex]) {
-            console.warn('ssList: リストテーブルが見つかりませんでした (index 2)');
-            alert('リストテーブルの構築に失敗しました。');
-            return false;
-        }
+      if (tables.length <= tableIndex || !tables[tableIndex]) {
+        console.warn('ssList: リストテーブルが見つかりませんでした (index 2)');
+        alert('リストテーブルの構築に失敗しました。');
+        return false;
+      }
 
-        const rows = document.getElementsByTagName('tr');
-        let menuHtml = '';
+      const rows = document.getElementsByTagName('tr');
 
-        if (this.pageInfo.islist && rows.length > tableIndex + 1 && rows[tableIndex + 1].firstElementChild) {
-            menuHtml = this.#createMenu(rows[tableIndex + 1].firstElementChild.innerHTML);
-            rows[tableIndex].firstElementChild?.remove();
-            rows[tableIndex + 1].firstElementChild?.remove();
-        }
+      // 新しい外枠テーブル
+      const outer = document.createElement('table');
+      outer.id = 'new_sstable';
+      outer.className = 'ss-main-table';
 
-        const newTable = `
-            <table id="new_sstable" class="ss-main-table">
-                <tbody>
-                    <tr>
-                        <td class="ss-menu-cell">${menuHtml}</td>
-                        <td class="ss-list-table-cell">
-                            <table id="sslist_table" class="sslist_table brdr">${tables[tableIndex].innerHTML}</table>
-                        </td>
-                    </tr>
-                </tbody>
-            </table>`;
+      const tbody = document.createElement('tbody');
+      const tr = document.createElement('tr');
 
-        // 挿入位置：リストテーブルの前のテーブル（通常は広告やヘッダー）の後
-        const targetTable = tables[tableIndex - 1] || tables[tableIndex].parentElement;
-        if (targetTable) {
-            tables[tableIndex].remove(); // 元テーブル削除
-            targetTable.insertAdjacentHTML('afterend', newTable);
-        } else {
-            // フォールバック：bodyの最後に追加
-            document.body.insertAdjacentHTML('beforeend', newTable);
-        }
+      // MENU側
+      const tdMenu = document.createElement('td');
+      tdMenu.className = 'ss-menu-cell';
 
-        this.#tableCache = document.getElementById('sslist_table');
-        return true;
+      // リスト側
+      const tdList = document.createElement('td');
+      tdList.className = 'ss-list-table-cell';
+
+      // 既存のリストテーブルを「そのまま移植」
+      const listTable = tables[tableIndex];
+
+      // ★ここでrowspanメニューを引っこ抜く（hover巻き込み対策）
+      const extractedMenuCell = this.#extractRowspanMenuFromSsListTable(listTable);
+
+      listTable.id = 'sslist_table';
+      listTable.className = 'sslist_table brdr';
+      tdList.appendChild(listTable); // ここが肝：innerHTML再パースしない
+
+      // 左メニューの構築（抽出できた場合のみ）
+      if (extractedMenuCell) {
+        const menuTable = document.createElement('table');
+        menuTable.id = 'ssmenu';
+        menuTable.className = 'ss-menu-table brdr';
+
+        const menuTbody = document.createElement('tbody');
+
+        const trHead = document.createElement('tr');
+        trHead.className = 'bga';
+        const tdHead = document.createElement('td');
+        tdHead.className = 'ss-menu-header';
+        const b = document.createElement('b');
+        b.textContent = 'MENU';
+        tdHead.appendChild(b);
+        trHead.appendChild(tdHead);
+
+        const trBody = document.createElement('tr');
+        trBody.className = 'bgc';
+        const tdBody = document.createElement('td');
+        tdBody.className = 'ssmenu_link';
+
+        // extractedMenuCell の中身を移植（clone でも move でもOK）
+        // moveにすると軽い（ただし元DOMからは消える＝今回ちょうどいい）
+        tdBody.append(...Array.from(extractedMenuCell.childNodes));
+
+        trBody.appendChild(tdBody);
+        menuTbody.append(trHead, trBody);
+        menuTable.appendChild(menuTbody);
+
+        tdMenu.appendChild(menuTable);
+      }
+
+      tr.append(tdMenu, tdList);
+      tbody.appendChild(tr);
+      outer.appendChild(tbody);
+
+      // 挿入位置：元コードに合わせて「tableIndex - 1 の後ろ」
+      const targetTable = tables[tableIndex - 1] || outer.parentElement;
+      if (targetTable?.parentNode) {
+        targetTable.parentNode.insertBefore(outer, targetTable.nextSibling);
+      } else {
+        document.body.appendChild(outer);
+      }
+
+      this.#tableCache = document.getElementById('sslist_table');
+      return true;
+    }
+
+    // ssListにて、1行目ホバーでメニュー部分まで作用するのを避けるための対策
+    #extractRowspanMenuFromSsListTable(listTable) {
+      // 1) ヘッダ行の先頭 "MENU" 列を除去（存在すれば）
+      const headerRow = listTable.querySelector('tr.bga');
+      if (headerRow && headerRow.firstElementChild) {
+        headerRow.firstElementChild.remove();
+      }
+
+      // 2) rowspanメニュー<td> を持ってる最初のデータ行を探す
+      //    典型：tr.bgc の先頭tdに rowspan が付いている
+      const firstDataRow = Array.from(listTable.querySelectorAll('tr.bgc')).find(tr => {
+        const td = tr.firstElementChild;
+        return td && td.tagName === 'TD' && td.hasAttribute('rowspan');
+      });
+
+      if (!firstDataRow) return null;
+
+      const menuCell = firstDataRow.firstElementChild;
+      // リスト行からメニュー<td>を外す（これで hover 巻き込みが止まる）
+      menuCell.remove();
+
+      return menuCell; // 中身はこれを使う
     }
 
     // mainList専用：インデックスに依存しない安全な方法
     #reconstructMainListTable() {
-        const mainListTable = Array.from(document.getElementsByTagName('table')).find(table =>
-            table.id === 'table' ||
-            (table.classList.contains('brdr') &&
-            ['90%', '100%'].includes(table.getAttribute('width')) &&
-            table.cellPadding === '3' &&
-            table.cellSpacing === '1')
-        );
+      const mainListTable = Array.from(document.getElementsByTagName('table')).find(table =>
+        table.id === 'table' ||
+        (table.classList.contains('brdr') &&
+          ['90%', '100%'].includes(table.getAttribute('width')) &&
+          table.cellPadding === '3' &&
+          table.cellSpacing === '1')
+      );
 
-        if (!mainListTable) {
-            console.warn('mainList: メインリストテーブルが見つかりませんでした');
-            alert('リストテーブルの構築に失敗しました。ページを再読み込みしてください。');
-            return false;
-        }
+      if (!mainListTable) {
+        console.warn('mainList: メインリストテーブルが見つかりませんでした');
+        alert('リストテーブルの構築に失敗しました。ページを再読み込みしてください。');
+        return false;
+      }
 
-        const newTable = `
-            <table id="new_maintable" class="main-main-table">
-                <tbody>
-                    <tr>
-                        <td class="main-list-table-cell">
-                            <table id="mainlist_table" class="mainlist_table brdr">${mainListTable.innerHTML}</table>
-                        </td>
-                    </tr>
-                </tbody>
-            </table>`;
+      // ★移動前に「元の挿入位置」を確保する（ここが重要）
+      const originalParent = mainListTable.parentNode;
+      const originalNext = mainListTable.nextSibling;
 
-        mainListTable.insertAdjacentHTML('afterend', newTable);
-        mainListTable.remove();
+      const outer = document.createElement('table');
+      outer.id = 'new_maintable';
+      outer.className = 'main-main-table';
 
-        this.#tableCache = document.getElementById('mainlist_table');
-        return true;
+      const tbody = document.createElement('tbody');
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.className = 'main-list-table-cell';
+
+      // 元テーブルを整形して、そのまま移植（再パースなし）
+      mainListTable.id = 'mainlist_table';
+      mainListTable.className = 'mainlist_table brdr';
+
+      td.appendChild(mainListTable);
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      outer.appendChild(tbody);
+
+      // ★元の場所に outer を挿入（mainListTable は既に移動済みでもOK）
+      if (originalParent) {
+        originalParent.insertBefore(outer, originalNext);
+      } else {
+        document.body.appendChild(outer);
+      }
+
+      this.#tableCache = document.getElementById('mainlist_table');
+      return true;
     }
 
 
-    // メニューテーブルを生成（SSページのみ）
-    #createMenu(content) {
-        if (this.pageType !== 'ssList') return '';
-        return `
-            <table id="ssmenu" class="ss-menu-table brdr">
-                <tbody>
-                    <tr class="bga"><td class="ss-menu-header"><b>MENU</b></td></tr>
-                    <tr class="bgc"><td class="ssmenu_link">${content}</td></tr>
-                </tbody>
-            </table>`;
-    }
+    #processRowsInChunks(rows, chunkSize = 40) {
+      let i = 0;
+      const n = rows.length;
 
-    #processRowsInChunks(rows, chunkSize = 20) {
-        const chunks = [];
-        for (let i = 0; i < rows.length; i += chunkSize) {
-            chunks.push(rows.slice(i, i + chunkSize));
-        }
-        let chunkIndex = 0;
-        const processNextChunk = () => {
-            if (chunkIndex >= chunks.length) return;
-            chunks[chunkIndex].forEach((row, idx) => this.#processRow(row, chunkIndex * chunkSize + idx));
-            chunkIndex++;
-            requestAnimationFrame(processNextChunk);
-        };
-        requestAnimationFrame(processNextChunk);
+      const processNext = () => {
+        const end = Math.min(i + chunkSize, n);
+        for (; i < end; i++) this.#processRow(rows[i], i);
+        if (i < n) requestAnimationFrame(processNext);
+      };
+
+      requestAnimationFrame(processNext);
     }
 
     // 行のスタイルとリンクを一括処理
     #processRow(row, index) {
-        const tdSecond = row.querySelector('td:nth-child(2)');
+        const tdSecond =  row.cells?.[1];
         if (!tdSecond) return;
 
-        const titleElement = tdSecond.querySelector('b a') || tdSecond.querySelector('a') || tdSecond.querySelector('b');
+        //const titleElement = tdSecond.querySelector('b a') || tdSecond.querySelector('a') || tdSecond.querySelector('b');
+        const a = tdSecond.querySelector('a');
+        const titleElement = a || tdSecond.querySelector('b');
+
         const content = titleElement?.textContent.trim() || row.textContent.trim();
         if (!content) return;
 
@@ -650,19 +803,35 @@ class ListFormatter {
         row.classList.toggle('list-base-style', this.config.ssList?.adjustLineHeight);
 
         // お気に入り/NG適用（共通）
-        const favoriteTypes = ['primary', 'secondary', 'watching', 'blocked'];
-        for (const type of favoriteTypes) {
-            const className = type === 'blocked' ? 'list-blocked' : `list-favorite-${type}`;
-            const shouldApply = this.favoritePatterns[type] && this.favoritePatterns[type].test(content);
-            row.classList.toggle(className, shouldApply);
+        // blockedを先に
+        const blockedRe = this.favoritePatterns.blocked;
+        const isBlocked = blockedRe && blockedRe.test(content);
+        row.classList.toggle('list-blocked', isBlocked);
+        if (isBlocked) {
+          row.classList.remove('list-favorite-primary','list-favorite-secondary','list-favorite-watching');
+          return; // display:none ならここで終わるのが一番速い
         }
+
+        const pri = this.favoritePatterns.primary;
+        if (pri) row.classList.toggle('list-favorite-primary', pri.test(content));
+        const sec = this.favoritePatterns.secondary;
+        if (sec) row.classList.toggle('list-favorite-secondary', sec.test(content));
+        const watch = this.favoritePatterns.watching;
+        if (watch) row.classList.toggle('list-favorite-watching', watch.test(content));
+        // secondary / watchingも同様
 
         // SSページ特有の直リンク処理
         if (this.pageType === 'ssList' && row.classList.contains('bgc') && this.config.ssList?.directLinks) {
-            const linkMatch = row.innerHTML.match(/&(?:amp;)?all=([^&"]+)/);
-            if (!linkMatch) return;
+            const aAll = row.querySelector(
+              'a[href*="?all="], a[href*="&all="], a[href*="?amp;all="], a[href*="&amp;all="]'
+            );
+            if (!aAll) return;
 
-            const articleId = linkMatch[1];
+            const href = aAll.getAttribute('href') || '';
+            const m = href.match(/[?&](?:amp;)?all=([^&]+)/);
+            if (!m) return;
+            const articleId = m[1];
+
             const bElements = Array.from(row.getElementsByTagName('b'));
             if (!bElements.length) return;
 
@@ -670,11 +839,14 @@ class ListFormatter {
             const lastIndex = bElements.length - 1;
 
             if (isChiraura) {
-                bElements[lastIndex].innerHTML = this.#createLink('all_msg', articleId, bElements[lastIndex].innerHTML);
+                const bLast = bElements[lastIndex];
+                const nodes = Array.from(bLast.childNodes);         // 元の中身を保持
+                bLast.replaceChildren(this.#createLinkElement('all_msg', articleId, nodes));
+
                 if (!row.querySelector('td [href*="impression"]')) {
                     const tdImpression = document.createElement('td');
                     tdImpression.align = 'center';
-                    tdImpression.innerHTML = this.#createLink('impression', articleId, '？', '&page=1');
+                    tdImpression.replaceChildren(this.#createLinkElement('impression', articleId, '？', '&page=1'));
                     row.insertBefore(tdImpression, row.lastChild);
                 }
             } else {
@@ -686,12 +858,16 @@ class ListFormatter {
 
                 const indices = { article: lastIndex - 2, impression: lastIndex - 1, pv: lastIndex };
                 if (indices.article >= 0 && indices.impression >= 0) {
-                    bElements[indices.article].innerHTML = this.#createLink('all_msg', articleId, bElements[indices.article].innerHTML);
-                    bElements[indices.impression].innerHTML = this.#createLink('impression', articleId, bElements[indices.impression].innerHTML, '&page=1');
+                      const bArt = bElements[indices.article];
+                      const artNodes = Array.from(bArt.childNodes);
+                      bArt.replaceChildren(this.#createLinkElement('all_msg', articleId, artNodes));
+                      const bImp = bElements[indices.impression];
+                      const impNodes = Array.from(bImp.childNodes);
+                      bImp.replaceChildren(this.#createLinkElement('impression', articleId, impNodes, '&page=1'));
                 }
                 if (this.config.ssList.showPvRatio && indices.pv >= 0) {
-                    bElements[indices.pv].innerHTML = `${counts.perArticle}/1記事`;
-                    const tdElements = row.getElementsByTagName('td');
+                    bElements[indices.pv].textContent = `${counts.perArticle}/1記事`;
+                    const tdElements = row.cells;
                     if (tdElements.length >= 2) tdElements[tdElements.length - 2].style.textAlign = 'right';
                 }
             }
@@ -711,8 +887,8 @@ class ListFormatter {
         if (this.pageType !== 'ssList') return { article: 0, pv: 0, perArticle: 0 };
         const countIndex = bElements.length - 3;
         const pvIndex = bElements.length - 1;
-        const articleCount = Number(bElements[countIndex]?.innerHTML.replace(/<\/?[^>]+>/gi, '') || 0);
-        const pvCount = Number(bElements[pvIndex]?.innerHTML.replace(/<\/?[^>]+>/gi, '') || 0);
+        const articleCount = Number(bElements[countIndex]?.textContent || 0);
+        const pvCount = Number(bElements[pvIndex]?.textContent || 0);
         return {
             article: articleCount,
             pv: pvCount,
@@ -720,10 +896,26 @@ class ListFormatter {
         };
     }
 
-    // リンクを生成（SSページのみ）
-    #createLink(type, articleId, content, extraParams = '') {
-        if (this.pageType !== 'ssList') return content;
-        return `<a href="/bbs/sst/sst.php?act=${type}&cate=all&${type === 'all_msg' ? 'all' : 'no'}=${articleId}${extraParams}" target="_blank">${content}</a>`;
+    // DOM版リンク生成（SSページのみ）
+    #createLinkElement(type, articleId, contentOrNodes, extraParams = '') {
+      if (this.pageType !== 'ssList') {
+        // SS以外はそのまま返す
+        const span = document.createElement('span');
+        if (Array.isArray(contentOrNodes)) span.append(...contentOrNodes);
+        else span.textContent = String(contentOrNodes ?? '');
+        return span;
+      }
+
+      const a = document.createElement('a');
+      a.href = `/bbs/sst/sst.php?act=${type}&cate=all&${type === 'all_msg' ? 'all' : 'no'}=${articleId}${extraParams}`;
+      a.target = '_blank';
+
+      if (Array.isArray(contentOrNodes)) {
+        a.append(...contentOrNodes);
+      } else {
+        a.textContent = String(contentOrNodes ?? '');
+      }
+      return a;
     }
 
     // 不可視化解除ボタン/チラ裏で感想カラムを追加
@@ -750,19 +942,21 @@ class ListFormatter {
                 const tdImp = document.createElement('td');
                 tdImp.setAttribute('nowrap', '');
                 tdImp.align = 'center';
-                tdImp.innerHTML = '感想';
+                tdImp.textContent = '感想';
                 firstRow.insertBefore(tdImp, firstRow.lastChild);
                 firstRow.classList.add('impression-added');
             }
         }
 
-        table.appendChild(fragment);
     }
 
     // 不可視化を解除
     #handleUnhide() {
         const table = this.#getTable();
-        if (table) table.querySelectorAll('tr.list-blocked').forEach(row => row.classList.remove('list-blocked'));
+        if (table) table.querySelectorAll('tr.list-blocked').forEach(row => {
+            row.classList.remove('list-blocked');
+            row.style.display = '';
+        });
     }
 
     // リンクを最適化（SSページのみ）
@@ -783,23 +977,25 @@ class ListFormatter {
 
         const links = table.querySelectorAll('a[href*="sst.php"], a[href*="sss.php"], a[href*="mainbbs.php"]');
         links.forEach(link => {
-            let href = link.getAttribute('href');
-            let text = link.innerHTML;
+          let href = link.getAttribute('href') || '';
+          let text = link.textContent || '';
 
-            activePatterns.href?.forEach(({ pattern, replacement, attr, value }) => {
-                if (pattern.test(href)) {
-                    href = href.replace(pattern, replacement);
-                    link.setAttribute('href', href);
-                    if (attr) link.setAttribute(attr, value);
-                }
-            });
-            activePatterns.text?.forEach(({ pattern, replacement }) => {
-                if (pattern.test(text)) {
-                    text = text.replace(pattern, replacement);
-                    link.innerHTML = text;
-                }
-            });
+          activePatterns.href?.forEach(({ pattern, replacement, attr, value }) => {
+            if (pattern.test(href)) {
+              href = href.replace(pattern, replacement);
+              link.setAttribute('href', href);
+              if (attr) link.setAttribute(attr, value);
+            }
+          });
+
+          activePatterns.text?.forEach(({ pattern, replacement }) => {
+            if (pattern.test(text)) {
+              text = text.replace(pattern, replacement);
+              link.textContent = text;
+            }
+          });
         });
+
     }
 
     // 設定を最新に更新（CONFIG変更時用）
@@ -839,7 +1035,7 @@ class ListFormatter {
                     alert('リストテーブルの構築に失敗しました。ページを再読み込みしてください。');
                     return; // テーブルがない場合は後続処理をスキップ
                 }
-                const rows = Array.from(table.querySelectorAll('tr'));
+                const rows = table.rows;
                 this.#processRowsInChunks(rows); // チャンク処理に変更
                 this.#postProcessTable();
                 if (this.pageType === 'ssList') this.#optimizeLinks();
@@ -870,9 +1066,8 @@ class ListStyles {
 
     static init() {
         if (this.#styleElement) return;
-        this.#styleElement = document.createElement('style');
-        this.#styleElement.id = 'ss-list-styles';
-        this.#styleElement.textContent = `
+
+        const cssText = `
             :root {
                 .list-base-style {
                     line-height: var(--ss-line-height, 2.0);
@@ -949,7 +1144,8 @@ class ListStyles {
                 }
             }
         `;
-        document.head.appendChild(this.#styleElement);
+
+        this.#styleElement = ensureStyleElement('ss-list-styles', cssText);
         this.#isInitialized = true;
     }
 
@@ -962,11 +1158,10 @@ class ListStyles {
 class CommentPageFormatter {
     #commentCountCache = null;          // コメント数のキャッシュ
     #isInitialized = false;             // 初期化済みフラグ
-    #pageLinksCache = new Map();        // ページリンクのキャッシュ
 
     constructor(config) {
         this.config = config || { board: { sortDesc: true } };
-        this.commentTable = document.getElementsByTagName('table')[1];
+        this.commentTable = document.getElementsByTagName('table')[1] || null;
         this.pageInfo = this.#getPageInfo();
     }
 
@@ -985,7 +1180,7 @@ class CommentPageFormatter {
     // コメント数をキャッシュから取得、初回はHTMLから抽出
     #getCommentCount() {
         if (this.#commentCountCache === null) {
-            const match = this.commentTable.innerHTML.match(/\[(\d+)\]/);
+            const match = (this.commentTable.textContent || '').match(/\[(\d+)\]/);
             this.#commentCountCache = match ? parseInt(match[1], 10) : 0;
         }
         return this.#commentCountCache;
@@ -1005,7 +1200,13 @@ class CommentPageFormatter {
             if (pagination) {
                 fragment.appendChild(pagination.cloneNode(true)); // 上部ページネーション
                 const td = tableClone.querySelector('tbody td');
-                const writeForm = td?.querySelector('form[action="/bbs/sst/sst.php"][method="post"]:has(input[name="act"][value="write_impression"])');
+                const forms = td ? td.querySelectorAll('form[action="/bbs/sst/sst.php"][method="post"]') : [];
+                let writeForm = null;
+                for (const f of forms) {
+                  const act = f.querySelector('input[name="act"]');
+                  if (act && act.value === 'write_impression') { writeForm = f; break; }
+                }
+
                 if (writeForm) {
                     // 既存のページリンクを削除（新しいページネーション挿入前）
                     td.querySelectorAll('a[href*="page"]').forEach(link => link.remove());
@@ -1021,33 +1222,42 @@ class CommentPageFormatter {
 
     // ページネーションリンクを生成
     #createPagination() {
-        const totalComments = this.#getCommentCount();
-        if (!totalComments) return null;
+      const totalComments = this.#getCommentCount();
+      if (!totalComments) return null;
 
-        const totalPages = Math.ceil(totalComments / 20);
-        const startPage = this.pageInfo.currentPage + totalPages - 1;
-        const cacheKey = `${this.pageInfo.articleId}-${this.pageInfo.currentPage}-${totalPages}-${totalComments}`; // articleIdを追加
-        if (!this.#pageLinksCache.has(cacheKey)) {
-            const links = Array.from({ length: startPage }, (_, i) => {
-                const page = startPage - i;
-                const startComment = Math.max(totalComments - 20 * (page - (this.pageInfo.currentPage - 1)) + 1, 1);
-                const formattedNumber = startComment.toString().padStart(4, '0');
-                return page === this.pageInfo.currentPage
-                    ? `[${formattedNumber}-]`
-                    : `<a href="${this.#getPageUrl(page)}">[${formattedNumber}-]</a>`;
-            }).join('  ');
-            this.#pageLinksCache.set(cacheKey, links);
+      const totalPages = Math.ceil(totalComments / 20);
+      const startPage = this.pageInfo.currentPage + totalPages - 1;
+
+      const table = document.createElement("table");
+      table.className = "ss-pagination-table";
+
+      const row = table.insertRow();
+
+      const tdPast = el("td", { class: "ss-pagination-past", text: "過去←" });
+      const tdLinks = el("td", { class: "ss-pagination-links" });
+      const tdLatest = el("td", { class: "ss-pagination-latest", text: "→最新" });
+
+      for (let i = 0; i < startPage; i++) {
+        const page = startPage - i;
+
+        const startComment = Math.max(
+          totalComments - 20 * (page - (this.pageInfo.currentPage - 1)) + 1,
+          1
+        );
+        const formattedNumber = startComment.toString().padStart(4, "0");
+        const label = `[${formattedNumber}-]`;
+
+        if (i !== 0) tdLinks.appendChild(document.createTextNode("  "));
+
+        if (page === this.pageInfo.currentPage) {
+          tdLinks.appendChild(document.createTextNode(label));
+        } else {
+          tdLinks.appendChild(el("a", { href: this.#getPageUrl(page), text: label }));
         }
+      }
 
-        const table = document.createElement('table');
-        table.className = 'ss-pagination-table';
-        const row = table.insertRow();
-        row.innerHTML = `
-            <td class="ss-pagination-past">過去←</td>
-            <td class="ss-pagination-links">${this.#pageLinksCache.get(cacheKey)}</td>
-            <td class="ss-pagination-latest">→最新</td>
-        `;
-        return table;
+      row.append(tdPast, tdLinks, tdLatest);
+      return table;
     }
 
     // 指定ページのURLを生成
@@ -1060,25 +1270,52 @@ class CommentPageFormatter {
 
     // コメントの順序を反転
     #reverseComments(table) {
-        const td = table.querySelector('tbody td');
-        if (!td || !td.querySelectorAll('hr:not([width])').length) return;
+      const td = table.querySelector("tbody td");
+      if (!td) return;
 
-        let contentHtml = td.innerHTML;
+      // 逆順対象の hr（width属性なし）を探す
+      const isTargetHr = (n) =>
+        n &&
+        n.nodeType === 1 &&
+        n.tagName === "HR" &&
+        !n.hasAttribute("width");
 
-        // <hr> を一時置換して分割
-        contentHtml = contentHtml.replace(/<hr>/gi, '○●●z○');
-        const blocks = contentHtml.split('○●●z○');
+      const blocks = [];
+      let cur = [];
 
-        // 逆順処理
-        let reversedHtml = blocks[0] + '<hr>';
-        for (let i = blocks.length - 2; i > 0; i--) {
-            reversedHtml += blocks[i] + '<hr>';
+      // childNodesを走査して、target hr でブロック分割
+      for (const node of Array.from(td.childNodes)) {
+        if (isTargetHr(node)) {
+          blocks.push(cur);
+          cur = [];
+        } else {
+          cur.push(node);
         }
-        reversedHtml += blocks[blocks.length - 1];
+      }
+      blocks.push(cur);
 
-        // 最初のブロック
-        const finalHtml = reversedHtml;
-        td.innerHTML = finalHtml;
+      // 分割できてないなら何もしない
+      if (blocks.length < 2) return;
+
+      const frag = document.createDocumentFragment();
+
+      const appendBlock = (nodes) => {
+        for (const n of nodes) frag.appendChild(n);
+      };
+
+      // 元コードの組み立てと同じ：
+      // blocks[0] + <hr> + blocks[blocks.length-2..1] + <hr> + blocks[last]
+      appendBlock(blocks[0]);
+      frag.appendChild(document.createElement("hr"));
+
+      for (let i = blocks.length - 2; i > 0; i--) {
+        appendBlock(blocks[i]);
+        frag.appendChild(document.createElement("hr"));
+      }
+
+      appendBlock(blocks[blocks.length - 1]);
+
+      td.replaceChildren(frag);
     }
 
     // 日付を日本語形式にフォーマット
@@ -1098,12 +1335,12 @@ class CommentPageFormatter {
 
     // 初期化処理
     init() {
+        if (!this.commentTable) return;
         if (this.#isInitialized) return;
         try {
             if (!CommentPageStyles.isInitialized()) CommentPageStyles.init();
             const fragment = this.#processContent();
-            this.commentTable.innerHTML = '';
-            this.commentTable.appendChild(fragment);
+            this.commentTable.replaceChildren(fragment);
             this.#isInitialized = true;
         } catch (error) {
             console.error('Error formatting comments:', error);
@@ -1111,27 +1348,26 @@ class CommentPageFormatter {
     }
 }
 
-// コメントページのスタイル設定
+// 感想ページのスタイル設定
 class CommentPageStyles {
     static #styleElement = null;
     static #isInitialized = false;
 
     static init() {
-        if (this.#styleElement) return;
-        const styleSheet = `
-            .ss-comment-table { width: 100%; border-spacing: 0; }
-            .ss-pagination-table { width: 100%; border-spacing: 0; }
-            .ss-pagination-past { white-space: nowrap; text-align: left; vertical-align: top; padding: 0 5px; }
-            .ss-pagination-links { text-align: center; white-space: normal; word-wrap: break-word; padding: 0 5px; }
-            .ss-pagination-latest { white-space: nowrap; text-align: right; vertical-align: bottom; padding: 0 5px; }
-            @media (max-width: 600px) { .ss-pagination-links { font-size: 12px; padding: 2px; } }
-            @media (max-width: 400px) { .ss-pagination-links a { font-size: 10px; padding: 1px; }}
-        `;
-        this.#styleElement = document.createElement('style');
-        this.#styleElement.id = 'comment-page-styles';
-        this.#styleElement.textContent = styleSheet;
-        document.head.appendChild(this.#styleElement);
-        this.#isInitialized = true;
+      if (this.#isInitialized) return;
+
+      const styleSheet = `
+        .ss-comment-table { width: 100%; border-spacing: 0; }
+        .ss-pagination-table { width: 100%; border-spacing: 0; }
+        .ss-pagination-past { white-space: nowrap; text-align: left; vertical-align: top; padding: 0 5px; }
+        .ss-pagination-links { text-align: center; white-space: normal; word-wrap: break-word; padding: 0 5px; }
+        .ss-pagination-latest { white-space: nowrap; text-align: right; vertical-align: bottom; padding: 0 5px; }
+        @media (max-width: 600px) { .ss-pagination-links { font-size: 12px; padding: 2px; } }
+        @media (max-width: 400px) { .ss-pagination-links a { font-size: 10px; padding: 1px; }}
+      `;
+
+      this.#styleElement = ensureStyleElement('comment-page-styles', styleSheet);
+      this.#isInitialized = true;
     }
 
     static isInitialized() {
@@ -1149,7 +1385,7 @@ class ArticleGapHandler {
     constructor(config) {
         this.#searchParams = new URLSearchParams(window.location.search);
         this.#currentArticle = this.#searchParams.get('n');
-        this.#isEnabled = config.viewer.skipErrorPage
+        this.#isEnabled = !!config?.viewer?.skipErrorPage;
     }
 
     // ハンドラー実行の判定
@@ -1162,29 +1398,43 @@ class ArticleGapHandler {
 
     // 前後の記事番号を1パスで検索
     #findAdjacentArticles() {
-        const table = document.querySelector('#table');
-        if (!table) return { prev: null, next: null };
+      const table = document.querySelector('#table');
+      if (!table) return { prev: null, next: null };
 
-        const rows = Array.from(table.getElementsByTagName('tr'));
-        let prev = null, next = null, currentIndex = -1;
+      const rows = table.getElementsByTagName('tr');
+      const cur = String(this.#currentArticle);
 
-        for (let i = 0; i < rows.length; i++) {
-            const row = rows[i];
-            if (row.innerHTML.includes(`n=${this.#currentArticle}`)) {
-                currentIndex = i;
-                prev = i > 0 ? this.#extractNumber(rows[i - 1]) : null;
-                next = i + 1 < rows.length ? this.#extractNumber(rows[i + 1]) : null;
-                break;
-            }
+      let currentIndex = -1;
+
+      // 現在行を特定：a[href*="n=cur#kiji"] がある行
+      for (let i = 0; i < rows.length; i++) {
+        const a = rows[i].querySelector(`a[href*="n=${CSS.escape(cur)}#kiji"]`)
+              || rows[i].querySelector(`a[href*="n=${CSS.escape(cur)}"]`);
+        if (a) { currentIndex = i; break; }
+      }
+
+      if (currentIndex === -1) return { prev: null, next: null };
+
+      const extractFromFirstCell = (row) => {
+        const cell0 = row?.cells?.[0];
+        if (!cell0) return null;
+        const m = cell0.textContent.match(/\[(\d+)\]/);
+        return m ? m[1] : null;
+      };
+
+      // 近傍数行をスキャン（歯抜け/広告行混入対策）
+      const scan = (start, step) => {
+        for (let j = start, k = 0; j >= 0 && j < rows.length && k < 6; j += step, k++) {
+          const n = extractFromFirstCell(rows[j]);
+          if (n) return n;
         }
+        return null;
+      };
 
-        return currentIndex === -1 ? { prev: null, next: null } : { prev, next };
-    }
-
-    // 記事番号を抽出する共通関数
-    #extractNumber(row) {
-        const match = row.innerHTML.match(/\[(\d{1,3})\]/);
-        return match ? match[1] : null;
+      return {
+        prev: scan(currentIndex - 1, -1),
+        next: scan(currentIndex + 1, +1),
+      };
     }
 
     // ナビゲーションリンクを更新
@@ -1244,28 +1494,27 @@ class ArticleGapStyles {
     static #styleElement = null;
     static #isInitialized = false;
 
-
     static init() {
-        if (this.#styleElement) return;
-        const styleSheet = `
-            .ss-next-link, .ss-prev-link {
-                color: var(--ss-link-color, #0066cc);
-                text-decoration: none;
-            }
-            .ss-next-link:hover, .ss-prev-link:hover {
-                text-decoration: underline;
-            }
-            .ss-no-next, .ss-no-prev {
-                color: var(--ss-text-color, #888888);
-                font-style: italic;
-            }
-        `;
-        this.#styleElement = document.createElement('style');
-        this.#styleElement.id = 'article-gap-styles';
-        this.#styleElement.textContent = styleSheet;
-        document.head.appendChild(this.#styleElement);
-        this.#isInitialized = true;
+      if (this.#isInitialized) return;
+
+      const styleSheet = `
+        .ss-next-link, .ss-prev-link {
+          color: var(--ss-link-color, #0066cc);
+          text-decoration: none;
+        }
+        .ss-next-link:hover, .ss-prev-link:hover {
+          text-decoration: underline;
+        }
+        .ss-no-next, .ss-no-prev {
+          color: var(--ss-text-color, #888888);
+          font-style: italic;
+        }
+      `;
+
+      this.#styleElement = ensureStyleElement('article-gap-styles', styleSheet);
+      this.#isInitialized = true;
     }
+
     static isInitialized() {
         return this.#isInitialized;
     }
@@ -1274,6 +1523,8 @@ class ArticleGapStyles {
 // 目次ポップアップ機能を管理するクラス
 class IndexPopupHandler {
     #isInitialized = false; // 初期化状態の追跡
+    #resizeRaf = 0;
+
     constructor(config = {}) {
         this.config = {
             fontFamily: config.fontFamily || '',
@@ -1383,11 +1634,10 @@ class IndexPopupHandler {
 
     // 要素の初期化
     #initElements() {
-        this.elements = {
-            title: document.getElementsByTagName('title')[0],
-            bgbElements: document.getElementsByClassName('bgb')
-        };
-        this.pageInfo = this.#getPageInfo();
+      this.elements = this.elements || {};
+      this.elements.title = document.title ? document.querySelector('title') : null;
+      this.elements.bgbElements = document.getElementsByClassName('bgb');
+      this.elements.panel = null;
     }
 
     // イベントハンドラーのバインド
@@ -1425,7 +1675,7 @@ class IndexPopupHandler {
         const tableElement = document.getElementById('table');
         if (!tableElement) return '';
 
-        this.elements.title.innerHTML = tableElement.getElementsByTagName('a')[0].innerHTML;
+        this.elements.title.textContent = tableElement.getElementsByTagName('a')[0].innerHTML;
         return tableElement.innerHTML
             .replace(/<\/?b>/ig, '')
             .replace(/%">([^\n])/ig, '%" noWrap>$1');
@@ -1433,35 +1683,69 @@ class IndexPopupHandler {
 
     // 全記事用のインデックス生成
     #generateAllArticlesIndex() {
-        const { bgbElements } = this.elements;
-        const dates = document.body.innerHTML.match(/Date: [\d\/ :]{16}/g) || [];
-        const fragment = document.createDocumentFragment();
+      const { bgbElements } = this.elements;
+      if (!bgbElements || !bgbElements.length) return '';
 
-        if (bgbElements[0]?.getElementsByTagName('font')[0]) {
-            this.elements.title.innerHTML = bgbElements[0].getElementsByTagName('font')[0].innerHTML;
+      // タイトル：最初のbgbのfontを使う（現行通り）
+      const firstFont = bgbElements[0].getElementsByTagName('font')[0];
+      if (firstFont && this.elements.title) {
+        this.elements.title.textContent = firstFont.innerHTML;
+      }
+
+      const frag = document.createDocumentFragment();
+
+      for (let i = 0; i < bgbElements.length; i++) {
+        const bgb = bgbElements[i];
+        const fontElement = bgb.getElementsByTagName('font')[0];
+        if (!fontElement) continue;
+
+        // アンカーをDOMで挿入（innerHTML再パース回避）
+        if (!bgb.querySelector(`a[name="${i}"]`)) {
+          const anchor = document.createElement('a');
+          anchor.name = String(i);
+          // bgb内の先頭に置けばOK（fontの前でも後でも飛ぶ）
+          bgb.insertAdjacentElement('afterbegin', anchor);
         }
 
-        Array.from(bgbElements).forEach((element, i) => {
-            const fontElement = element.getElementsByTagName('font')[0];
-            if (!fontElement) return;
+        const linkTitle = fontElement.textContent?.trim() || fontElement.innerHTML;
 
-            const linkTitle = fontElement.innerHTML;
-            fontElement.innerHTML = `<A name="${i}"></A>${linkTitle}`;
-            const date = dates[i] ? dates[i].slice(6) : '';
+        // 日付：このbgbに続く本文ブロック（bgc）から Date: を探す
+        // 典型構造：bgb(tr) の次の tr に td.bgc がある
+        let date = '';
+        const nextTr = bgb.closest('tr')?.nextElementSibling;
+        const bgc = nextTr?.querySelector('td.bgc') || nextTr?.querySelector('td');
+        if (bgc) {
+          const tts = bgc.getElementsByTagName('tt');
+          for (let k = 0; k < tts.length; k++) {
+            const t = tts[k].textContent || '';
+            if (t.includes('Date:')) {
+              // "Date: 2026/02/24 21:30" → "2026/02/24 21:30"
+              date = t.replace('Date:', '').trim();
+              break;
+            }
+          }
+        }
 
-            const tr = document.createElement('tr');
-            tr.style.padding = '10px';
-            tr.innerHTML = `
-                <td noWrap>[${i}]</td>
-                <td><A href="#${i}">${linkTitle}</A></td>
-                <td noWrap>${date}</td>
-            `;
-            fragment.appendChild(tr);
-        });
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td noWrap>[${i}]</td>
+          <td><a href="#${i}">${this.#escapeHtml(linkTitle)}</a></td>
+          <td noWrap>${this.#escapeHtml(date)}</td>
+        `;
+        frag.appendChild(tr);
+      }
 
-        const table = document.createElement('table');
-        table.appendChild(fragment);
-        return table.outerHTML;
+      // createPanel側で<table>...</table>を付ける前提なので、tr群だけ返す
+      const tbody = document.createElement('tbody');
+      tbody.appendChild(frag);
+      return tbody.innerHTML;
+    }
+
+    // 最低限のHTMLエスケープ（タイトルに<や&が混ざる可能性対策）
+    #escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[ch]));
     }
 
     // パネル表示
@@ -1511,9 +1795,12 @@ class IndexPopupHandler {
 
     // リサイズ処理
     #handleResize() {
-        if (this.elements.panel) {
-            this.elements.panel.style.maxHeight = `${window.innerHeight - this.config.maxHeightOffset}px`;
-        }
+      if (!this.elements.panel) return;
+      if (this.#resizeRaf) cancelAnimationFrame(this.#resizeRaf);
+      this.#resizeRaf = requestAnimationFrame(() => {
+        this.elements.panel.style.maxHeight = `${window.innerHeight - this.config.maxHeightOffset}px`;
+        this.#resizeRaf = 0;
+      });
     }
 
     // UI要素の作成
@@ -1537,33 +1824,44 @@ class IndexPopupHandler {
 
     // ボタンの作成
     #createButton() {
-        const button = document.createElement('button');
-        const attrs = {
-            id: 'seaiz',
-            className: 'ind_swh',
-            title: 'インデックスをポップアップ (Ctrl+I)',
-            innerHTML: 'Index',
-            'aria-label': 'インデックスを表示',
-            'aria-expanded': 'false',
-            'aria-controls': 'tableind'
-        };
-        Object.assign(button, attrs);
-        return button;
+      const button = document.createElement('button');
+
+      // Object.assignで安全に入るものだけ
+      Object.assign(button, {
+        id: 'seaiz',
+        className: 'ind_swh',
+        title: 'インデックスをポップアップ (Ctrl+I)',
+        textContent: 'Index',
+      });
+
+      // aria-* は属性として付ける（これが正しい）
+      button.setAttribute('aria-label', 'インデックスを表示');
+      button.setAttribute('aria-expanded', 'false');
+      button.setAttribute('aria-controls', 'tableind');
+
+      return button;
     }
 
     // パネルの作成
-    #createPanel(index) {
-        const panel = document.createElement('div');
-        const attrs = {
-            id: 'tableind',
-            className: 'ind_ind',
-            innerHTML: `<table>${index}</table>`,
-            role: 'dialog',
-            'aria-label': 'インデックス'
-        };
-        Object.assign(panel, attrs);
-        panel.style.maxHeight = `${window.innerHeight - this.config.maxHeightOffset}px`;
-        return panel;
+    #createPanel(indexHtml) {
+      const panel = document.createElement('div');
+      panel.id = 'tableind';
+      panel.className = 'ind_ind';
+      panel.setAttribute('role', 'dialog');
+      panel.setAttribute('aria-label', 'インデックス');
+      panel.style.maxHeight = `${window.innerHeight - this.config.maxHeightOffset}px`;
+
+      const table = document.createElement('table');
+      const tbody = document.createElement('tbody');
+
+      // indexHtml は（IndexGenerator側で）escape済みの tr 群を想定
+      // panel.innerHTML を使わず、ここに閉じ込める
+      tbody.innerHTML = indexHtml;
+
+      table.appendChild(tbody);
+      panel.appendChild(table);
+
+      return panel;
     }
 
     // クリーンアップ処理
@@ -1668,7 +1966,7 @@ class StyleControlBar {
                     { pattern: /([^」』）》≫\)｣＞】>])<br>([＜【「『《≪（\(｢])/ig, replacement: '$1<ooo><br></ooo><br>$2' },
                     { pattern: /([」』）》≫\)｣＞】])<br>([^＜【「『《≪（\(｢<])/ig, replacement: '$1<ooo><br></ooo><br>$2' }
                 ],
-                removePattern: [{ pattern: /<ooo><br><\/ooo>/ig, replacement: '' }]
+                removePatterns: [{ pattern: /<ooo><br><\/ooo>/ig, replacement: '' }]
             }
     };
 
@@ -1816,16 +2114,9 @@ class StyleControlBar {
 
     // チェックボックスを生成するプライベートメソッド
     #createCheckbox(id, label, title, defaultChecked = false) {
-        const input = this.#createElement('input', {
-            type: 'checkbox',
-            id,
-            checked: defaultChecked
-        });
-
-        return this.#createElement('span', {
-            className: 'spn_inp',
-            title
-        }, [input, label]);
+      const input = this.#createElement('input', { type: 'checkbox', id, checked: defaultChecked });
+      const lbl = this.#createElement('label', { htmlFor: id, textContent: label });
+      return this.#createElement('span', { className: 'spn_inp', title }, [input, lbl]);
     }
 
     // スタイルを適用するプライベートメソッド
@@ -1833,25 +2124,52 @@ class StyleControlBar {
         if (type === 'style') {
             const style = StyleControlBar.#STYLE_MAP[key];
             if (!style) return;
+
             this.cachedElements[`${key}-elements`] = this.cachedElements[`${key}-elements`] || document.querySelectorAll(style.selector);
-            const elements = this.cachedElements[`${key}-elements`];
+            let elements = this.cachedElements[`${key}-elements`];
+
+            if (!elements || !elements.length || !document.contains(elements[0])) {
+              elements = document.querySelectorAll(style.selector);
+              this.cachedElements[`${key}-elements`] = elements;
+            }
+
             if (elements.length === 0) return;
             const isColorRelated = ['backgroundColor', 'color'].includes(key);
+
             elements.forEach(el => {
-                if (isColorRelated && value !== this.defaultSettings[key]) {
-                    el.style.removeProperty('backgroundColor');
-                    el.style.removeProperty('color');
+                if (isColorRelated) {
+                  if (value === this.defaultSettings[key]) {
+                    el.style.removeProperty(style.prop); // 'color' or 'background-color'
+                    return;
+                  }
                 }
                 el.style.setProperty(style.prop, value, 'important');
             });
-        } else if (type === 'format') {
-            const rule = StyleControlBar.#FORMAT_RULES[key];
-            if (!rule || !this.cachedElements.content) return;
-            const applyPatterns = (text, patterns) =>
-                patterns.reduce((acc, { pattern, replacement }) => acc.replace(pattern, replacement), text);
-            this.cachedElements.content.innerHTML = ['insertspace'].includes(key)
-                ? (value ? applyPatterns(this.cachedElements.content.innerHTML, rule.applyPatterns) : applyPatterns(this.cachedElements.content.innerHTML, rule.removePatterns))
-                : (value ? this.cachedElements.content.innerHTML.replace(rule.applyPattern, rule.applyReplacement) : this.cachedElements.content.innerHTML.replace(rule.removePattern, rule.removeReplacement));
+        }
+
+        if (type === 'format') {
+          const rule = StyleControlBar.#FORMAT_RULES[key];
+          const contentEl = this.cachedElements.content;
+          if (!rule || !contentEl) return;
+
+          let html = contentEl.innerHTML;  // 1回だけ
+          const before = html
+
+          const applyPatterns = (text, patterns) =>
+            patterns.reduce((acc, { pattern, replacement }) => acc.replace(pattern, replacement), text);
+
+          if (key === 'insertspace') {
+            html = value
+              ? applyPatterns(html, rule.applyPatterns)
+              : applyPatterns(html, rule.removePatterns);
+          } else {
+            html = value
+              ? html.replace(rule.applyPattern, rule.applyReplacement)
+              : html.replace(rule.removePattern, rule.removeReplacement);
+          }
+
+          // 変化があるときだけ代入（再パース削減）
+          if (html !== before) contentEl.innerHTML = html;
         }
     }
 
@@ -1908,8 +2226,6 @@ class StyleControlBar {
                 checkbox.checked = defaultChecked;
                 this.#applyFormatting(formatType, defaultChecked);
             });
-
-            this.#saveSettings();
 
             localStorage.removeItem(this.storageKey);
         } catch (error) {
@@ -2093,7 +2409,8 @@ class StyleControlBarStyles {
     static #isInitialized = false;
 
     static init() {
-        if (this.#styleElement) return; // 既にインジェクト済みならスキップ
+        if (this.#isInitialized) return;
+
         const styleSheet = `
             /* テーマごとのCSS変数定義 */
             :root[data-theme="light"] {
@@ -2227,12 +2544,10 @@ class StyleControlBarStyles {
             }
         `;
 
-        this.#styleElement = document.createElement('style');
-        this.#styleElement.id = 'style-control-bar-styles';
-        this.#styleElement.textContent = styleSheet;
-        document.head.appendChild(this.#styleElement);
+        this.#styleElement = ensureStyleElement('style-control-bar-styles', styleSheet);
         this.#isInitialized = true;
     }
+
     static isInitialized() {
         return this.#isInitialized;
     }
@@ -2246,6 +2561,7 @@ class FavoritesManagerStyles {
 
     static init() {
         if (this.#isInitialized) return;
+
         const styleSheet = `
             :root {
                 --fm-bg-color: #ffffff;
@@ -2257,6 +2573,8 @@ class FavoritesManagerStyles {
                 --fm-hover-bg: #f8f9fa;
                 --fm-form-bg: #f8f9fa;
                 --fm-input-border: #ddd;
+                --se-border-color: var(--ss-border-color, #ddd);
+
             }
             :root[data-theme="dark"] {
                 --fm-bg-color: #1a1a1a;
@@ -2268,6 +2586,8 @@ class FavoritesManagerStyles {
                 --fm-hover-bg: #2a2a2a;
                 --fm-form-bg: #2a2a2a;
                 --fm-input-border: #444444;
+                --se-border-color: var(--ss-border-color, #444444);
+
             }
             .fm-container {
                 position: fixed;
@@ -2433,11 +2753,11 @@ class FavoritesManagerStyles {
                 margin-right: 10px;
             }
         `;
-        this.#styleElement = document.createElement('style');
-        this.#styleElement.textContent = styleSheet;
-        document.head.appendChild(this.#styleElement);
+
+        this.#styleElement = ensureStyleElement('favorites-manager-styles', styleSheet);
         this.#isInitialized = true;
     }
+
     static isInitialized() {
         return this.#isInitialized;
     }
@@ -2454,49 +2774,114 @@ class FavoritesUIBuilder {
 
     // お気に入り管理画面のDOM要素を生成
     createUI(manager) {
-        const container = document.createElement('div');
-        container.id = 'favorites-manager';
-        container.className = 'fm-container';
-        container.innerHTML = `
-            <div class="fm-header">
-                <h2 style="margin: 0; font-size: 14px;">お気に入り管理</h2>
-                <button id="close-favorites" class="fm-close-button">✖</button>
-            </div>
-            <div class="fm-form-section">
-                <div class="fm-jump-buttons">
-                    ${Object.keys(this.#CATEGORY_CONFIG).map(category => `
-                        <button class="fm-button ${category}" data-category="${category}">
-                            ${this.#CATEGORY_CONFIG[category].icon} ${this.#CATEGORY_CONFIG[category].name}
-                        </button>
-                    `).join('')}
-                </div>
-            </div>
-            <div class="fm-form-section">
-                <div style="position: relative;">
-                    <input type="text" id="search-favorites" class="fm-search" placeholder="検索...">
-                    <button id="clear-search" class="fm-button" style="position: absolute; right: 5px; top: 50%; transform: translateY(-50%); padding: 0 5px; display: none;">✖</button>
-                </div>
-                <select id="favorite-category" class="fm-select">
-                    ${Object.entries(this.#CATEGORY_CONFIG).map(([key, config]) => `
-                        <option value="${key}">${config.name}</option>
-                    `).join('')}
-                </select>
-                <input type="text" id="new-favorite" class="fm-input" placeholder="タイトルまたはNGワードを入力">
-                <button id="add-favorite" class="fm-button primary">追加</button>
-                <textarea id="new-favorite-memo" class="fm-textarea memo" placeholder="メモを入力（お気に入りのみ）" ${manager.searchState.term ? 'style="display: none;"' : ''}></textarea>
-                <div id="favorites-list-container"></div>
-                <div class="fm-io-buttons">
-                    <button id="export-favorites" class="fm-button export">エクスポート</button>
-                    <button id="import-favorites" class="fm-button import">インポート</button>
-                </div>
-                <textarea id="export-text" class="fm-textarea io" style="display: none;" placeholder="エクスポートデータ"></textarea>
-                <textarea id="import-text" class="fm-textarea io" style="display: none;" placeholder="以下のように入力してください:\n## 最重要お気に入り\n- タイトル1 // メモ1\n- タイトル2\n## NGワード\n- NGワード1\n- NGワード2"></textarea>
-            </div>
-        `;
+      const container = el("div", { id: "favorites-manager", class: "fm-container" });
 
-        const listContainer = container.querySelector('#favorites-list-container');
-        listContainer.appendChild(this.#renderFavoritesList(manager.favorites, manager.searchState.results));
-        return container;
+      // header
+      const header = el("div", { class: "fm-header" },
+        el("h2", { style: { margin: "0", fontSize: "14px" }, text: "お気に入り管理" }),
+        el("button", { id: "close-favorites", class: "fm-close-button", text: "✖", type: "button" })
+      );
+
+      // jump buttons
+      const jumpWrap = el("div", { class: "fm-form-section" },
+        el("div", { class: "fm-jump-buttons" },
+          Object.keys(this.#CATEGORY_CONFIG).map(category => {
+            const cfg = this.#CATEGORY_CONFIG[category];
+            return el("button", {
+              class: `fm-button ${category}`,
+              dataset: { category },
+              type: "button",
+              text: `${cfg.icon} ${cfg.name}`,
+            });
+          })
+        )
+      );
+
+      // search + clear
+      const searchInput = el("input", {
+        type: "text",
+        id: "search-favorites",
+        class: "fm-search",
+        placeholder: "検索...",
+      });
+
+      const clearBtn = el("button", {
+        id: "clear-search",
+        class: "fm-button",
+        type: "button",
+        text: "✖",
+        style: {
+          position: "absolute",
+          right: "5px",
+          top: "50%",
+          transform: "translateY(-50%)",
+          padding: "0 5px",
+          display: "none",
+        }
+      });
+
+      const searchBox = el("div", { style: { position: "relative" } }, searchInput, clearBtn);
+
+      // category select
+      const select = el("select", { id: "favorite-category", class: "fm-select" },
+        Object.entries(this.#CATEGORY_CONFIG).map(([key, cfg]) =>
+          el("option", { value: key, text: cfg.name })
+        )
+      );
+
+      // new favorite input
+      const newFav = el("input", {
+        type: "text",
+        id: "new-favorite",
+        class: "fm-input",
+        placeholder: "タイトルまたはNGワードを入力",
+      });
+
+      const addBtn = el("button", { id: "add-favorite", class: "fm-button primary", type: "button", text: "追加" });
+
+      const memo = el("textarea", {
+        id: "new-favorite-memo",
+        class: "fm-textarea memo",
+        placeholder: "メモを入力（お気に入りのみ）",
+        style: { display: manager.searchState.term ? "none" : "block" }
+      });
+
+      const listContainer = el("div", { id: "favorites-list-container" });
+      listContainer.appendChild(this.#renderFavoritesList(manager.favorites, manager.searchState.results));
+
+      // IO buttons / textareas
+      const ioButtons = el("div", { class: "fm-io-buttons" },
+        el("button", { id: "export-favorites", class: "fm-button export", type: "button", text: "エクスポート" }),
+        el("button", { id: "import-favorites", class: "fm-button import", type: "button", text: "インポート" }),
+      );
+
+      const exportText = el("textarea", {
+        id: "export-text",
+        class: "fm-textarea io",
+        placeholder: "エクスポートデータ",
+        style: { display: "none" }
+      });
+
+      const importText = el("textarea", {
+        id: "import-text",
+        class: "fm-textarea io",
+        placeholder:
+          "以下のように入力してください:\n" +
+          "## 最重要お気に入り\n" +
+          "- タイトル1 // メモ1\n" +
+          "- タイトル2\n" +
+          "## NGワード\n" +
+          "- NGワード1\n" +
+          "- NGワード2",
+        style: { display: "none" }
+      });
+
+      const formSection = el("div", { class: "fm-form-section" },
+        searchBox, select, newFav, addBtn, memo, listContainer, ioButtons, exportText, importText
+      );
+
+      container.append(header, jumpWrap, formSection);
+      return container;
     }
 
     // お気に入りリストのDOMを生成
@@ -2533,6 +2918,7 @@ class FavoritesUIBuilder {
 
                 const removeButton = document.createElement('button');
                 removeButton.className = 'fm-button remove';
+                removeButton.type = 'button';
                 removeButton.dataset.category = category;
                 removeButton.dataset.title = category === 'blocked' ? item : item.title;
                 removeButton.textContent = '削除';
@@ -2568,17 +2954,22 @@ class FavoritesUIBuilder {
 
     // 検索UIを更新
     updateSearchUI(manager) {
-        const container = document.getElementById('favorites-manager');
-        if (!container) return;
+      const container = document.getElementById('favorites-manager');
+      if (!container) return;
 
-        const searchInput = container.querySelector('#search-favorites');
-        const clearButton = container.querySelector('#clear-search');
-        if (searchInput && clearButton) {
-            searchInput.value = manager.searchState.term;
-            const isSearching = manager.searchState.term.trim();
-            searchInput.classList.toggle('active', isSearching);
-            clearButton.style.display = isSearching ? 'block' : 'none';
-        }
+      const searchInput = container.querySelector('#search-favorites');
+      const clearButton = container.querySelector('#clear-search');
+      const memo = container.querySelector('#new-favorite-memo');
+
+      const isSearching = !!(manager?.searchState?.term && manager.searchState.term.trim());
+
+      if (searchInput && clearButton) {
+        searchInput.value = manager.searchState.term;
+        searchInput.classList.toggle('active', isSearching);
+        clearButton.style.display = isSearching ? 'block' : 'none';
+      }
+
+      if (memo) memo.style.display = isSearching ? 'none' : 'block';
     }
 }
 
@@ -2593,7 +2984,7 @@ class FavoritesManager {
     };
     #handleEscKey; // ESCキーイベントハンドラー
     #uiBuilder; // UI生成インスタンス
-    #searchIndex = null; // 検索インデックス
+    #searchIndex = new Map(); // 検索インデックス（lowercase key -> matches）
 
     // 設定を受け取り初期化
     constructor(config = {}) {
@@ -2634,14 +3025,29 @@ class FavoritesManager {
     }
 
     // お気に入りデータをローカルストレージに保存
-    #saveFavorites(favorites) {
+    #saveFavorites(favorites, { rebuildIndex = true } = {}) {
         try {
             if (!favorites || typeof favorites !== 'object') throw new Error('Invalid favorites data');
             localStorage.setItem('arcadia_favorites', JSON.stringify(favorites));
-            this.favorites = { ...favorites };
+
+            if (rebuildIndex) {
+                // 破壊的変更を避けるためクローンして保持（インポートなど大量更新向け）
+                this.favorites = Object.fromEntries(
+                    Object.entries(favorites).map(([k, arr]) => [
+                        k,
+                        Array.isArray(arr)
+                            ? arr.map(x => (typeof x === 'object' && x ? { ...x } : x))
+                            : []
+                    ])
+                );
+                this.#buildSearchIndex();
+            } else {
+                // 差分更新時は参照を維持（検索インデックスも差分更新済み前提）
+                this.favorites = favorites;
+            }
+
             this.config.favorites = this.favorites;
             window.dispatchEvent(new Event('favorites-updated'));
-            this.#buildSearchIndex();
         } catch (error) {
             console.error('FavoritesManager: Failed to save favorites:', error.message);
         }
@@ -2649,43 +3055,104 @@ class FavoritesManager {
 
     // 検索用インデックスを構築
     #buildSearchIndex() {
-        this.#searchIndex = Object.entries(this.favorites).reduce((index, [category, items]) => {
-            items.forEach(item => {
-                const key = category === 'blocked' ? item : item.title;
-                index[key] = index[key] || [];
-                index[key].push({ category, item });
-                if (category !== 'blocked' && item.memo) {
-                    index[item.memo] = index[item.memo] || [];
-                    index[item.memo].push({ category, item });
-                }
-            });
-            return index;
-        }, {});
+      const index = new Map(); // key(lowercase) -> [{category, item}, ...]
+
+      const add = (rawKey, category, item) => {
+        if (rawKey === undefined || rawKey === null) return;
+        const key = String(rawKey).toLowerCase();
+        const list = index.get(key) || [];
+        list.push({ category, item });
+        index.set(key, list);
+      };
+
+      for (const [category, items] of Object.entries(this.favorites)) {
+        if (!Array.isArray(items)) continue;
+
+        for (const item of items) {
+          if (category === 'blocked') {
+            add(item, category, item);
+          } else if (item && typeof item === 'object') {
+            add(item.title, category, item);
+            if (item.memo) add(item.memo, category, item);
+          }
+        }
+      }
+
+      this.#searchIndex = index;
+    }
+
+    // 検索インデックスに1件追加（差分更新）
+    #addToSearchIndex(category, item) {
+        const add = (rawKey) => {
+            if (rawKey === undefined || rawKey === null) return;
+            const key = String(rawKey).toLowerCase();
+            const list = this.#searchIndex.get(key) || [];
+            list.push({ category, item });
+            this.#searchIndex.set(key, list);
+        };
+
+        if (category === 'blocked') {
+            add(item);
+            return;
+        }
+        add(item?.title);
+        if (item?.memo) add(item.memo);
+    }
+
+    // 検索インデックスから1件削除（差分更新）
+    #removeFromSearchIndex(category, itemOrTitle) {
+        const isBlocked = category === 'blocked';
+        const title = isBlocked ? String(itemOrTitle) : String(itemOrTitle?.title ?? '');
+        const memo = isBlocked ? '' : String(itemOrTitle?.memo ?? '');
+
+        const keys = [];
+        if (title) keys.push(title);
+        if (!isBlocked && memo) keys.push(memo);
+
+        const shouldRemove = (entry) => {
+            if (!entry || entry.category !== category) return false;
+            if (isBlocked) return String(entry.item) === title;
+
+            // item参照が変わっても title で同一判定できるようにする
+            return String(entry.item?.title ?? '') === title;
+        };
+
+        keys.forEach((rawKey) => {
+            const key = String(rawKey).toLowerCase();
+            const list = this.#searchIndex.get(key);
+            if (!list || !list.length) return;
+
+            const next = list.filter(e => !shouldRemove(e));
+            if (next.length) this.#searchIndex.set(key, next);
+            else this.#searchIndex.delete(key);
+        });
     }
 
     // お気に入りデータを検索
     #performSearch(term) {
-        this.searchState.term = term;
-        if (!term) {
-            this.searchState.results = null;
-            this.#refreshUI();
-            return;
-        }
+      this.searchState.term = term;
 
-        const trimmedTerm = term.trim().toLowerCase(); // 大文字小文字を無視し、前後の空白を除去
-        const results = { primary: [], secondary: [], watching: [], blocked: [] };
-
-        // 正規表現の代わりにシンプルな文字列マッチングを使用
-        Object.entries(this.#searchIndex).forEach(([key, matches]) => {
-            if (key.toLowerCase().includes(trimmedTerm)) {
-                matches.forEach(({ category, item }) => {
-                    if (!results[category].includes(item)) results[category].push(item);
-                });
-            }
-        });
-
-        this.searchState.results = results;
+      const trimmed = String(term || '').trim().toLowerCase();
+      if (!trimmed) {
+        this.searchState.results = null;
         this.#refreshUI();
+        return;
+      }
+
+      const results = { primary: [], secondary: [], watching: [], blocked: [] };
+
+      for (const [key, matches] of this.#searchIndex.entries()) {
+        if (!key.includes(trimmed)) continue;
+
+        for (const { category, item } of matches) {
+          // results[category] が無いケースを避ける（念のため）
+          if (!results[category]) results[category] = [];
+          if (!results[category].includes(item)) results[category].push(item);
+        }
+      }
+
+      this.searchState.results = results;
+      this.#refreshUI();
     }
 
     // お気に入りデータをテキスト形式でエクスポート
@@ -2811,13 +3278,23 @@ class FavoritesManager {
                     const memo = memoInput.value.trim();
                     const category = categorySelect.value;
                     if (title) {
+                        let addedItem = null;
                         if (category === 'blocked') {
-                            if (!this.favorites.blocked.includes(title)) this.favorites.blocked.push(title);
+                            if (!this.favorites.blocked.includes(title)) {
+                                this.favorites.blocked.push(title);
+                                addedItem = title;
+                            }
                         } else {
-                            this.favorites[category].push({ title, memo });
+                            addedItem = { title, memo };
+                            this.favorites[category].push(addedItem);
                         }
-                        this.searchState.results = null;
-                        this.#saveFavorites(this.favorites);
+
+                        if (addedItem !== null) {
+                            this.#addToSearchIndex(category, addedItem);
+                            this.searchState.results = null;
+                            this.#saveFavorites(this.favorites, { rebuildIndex: false });
+                        }
+
                         titleInput.value = '';
                         memoInput.value = '';
                         this.#refreshUI();
@@ -2849,13 +3326,28 @@ class FavoritesManager {
                     }
                 } else if (target.matches('.fm-button.remove')) {
                     const { category, title } = target.dataset;
+
+                    let removedItem = null;
                     if (category === 'blocked') {
+                        removedItem = title;
                         this.favorites[category] = this.favorites[category].filter(item => item !== title);
                     } else {
+                        removedItem = this.favorites[category].find(item => item.title === title) || { title };
                         this.favorites[category] = this.favorites[category].filter(item => item.title !== title);
                     }
-                    this.searchState.term.trim() ? this.#performSearch(this.searchState.term) : this.#saveFavorites(this.favorites);
-                    this.#refreshUI();
+
+                    if (removedItem !== null) this.#removeFromSearchIndex(category, removedItem);
+
+                    // 差分更新済みなので、保存時に全再構築しない
+                    this.#saveFavorites(this.favorites, { rebuildIndex: false });
+
+                    // 検索中なら結果を再計算、そうでなければ通常表示
+                    if (this.searchState.term.trim()) {
+                        this.#performSearch(this.searchState.term);
+                    } else {
+                        this.searchState.results = null;
+                        this.#refreshUI();
+                    }
                 } else if (target.matches('.fm-jump-buttons .fm-button')) {
                     const category = target.dataset.category;
                     const section = container.querySelector(`#category-${category}`);
@@ -2890,7 +3382,7 @@ class FavoritesManager {
 
         const initialize = () => {
             if (!document.body) {
-                setTimeout(initialize, 100);
+                document.addEventListener('DOMContentLoaded', initialize, { once: true });
                 return;
             }
             if (typeof FavoritesManagerStyles?.init === 'function') FavoritesManagerStyles.init();
@@ -2955,10 +3447,66 @@ class StyleThemeManager {
         return this.#currentTheme;
     }
 
-    // localStorageからCONFIGを読み込み、デフォルトとマージ
+    // localStorageからCONFIGを読み込み、デフォルトと“深めに”マージ
     #loadConfig(defaultConfig) {
-        const storedConfig = localStorage.getItem('arcadia_config');
-        return storedConfig ? { ...defaultConfig, ...JSON.parse(storedConfig) } : defaultConfig;
+      const stored = localStorage.getItem('arcadia_config');
+      if (!stored) return defaultConfig;
+
+      let parsed;
+      try {
+        parsed = JSON.parse(stored);
+      } catch (e) {
+        console.warn('arcadia_config parse failed; using defaults', e);
+        return defaultConfig;
+      }
+
+      // plain object 判定（null / array を弾く）
+      const isPlainObject = (v) =>
+        v !== null && typeof v === 'object' && !Array.isArray(v);
+
+      // 目的に対して十分な shallow+部分deep merge
+      const merged = {
+        ...defaultConfig,
+        ...parsed,
+        style: {
+          ...(defaultConfig.style || {}),
+          ...(isPlainObject(parsed.style) ? parsed.style : {}),
+          themes: {
+            ...(defaultConfig.style?.themes || {}),
+            ...(isPlainObject(parsed.style?.themes) ? parsed.style.themes : {}),
+            light: {
+              ...(defaultConfig.style?.themes?.light || {}),
+              ...(isPlainObject(parsed.style?.themes?.light) ? parsed.style.themes.light : {}),
+            },
+            dark: {
+              ...(defaultConfig.style?.themes?.dark || {}),
+              ...(isPlainObject(parsed.style?.themes?.dark) ? parsed.style.themes.dark : {}),
+            },
+            'high-contrast': {
+              ...(defaultConfig.style?.themes?.['high-contrast'] || {}),
+              ...(isPlainObject(parsed.style?.themes?.['high-contrast']) ? parsed.style.themes['high-contrast'] : {}),
+            },
+          },
+        },
+        favorites: {
+          ...(defaultConfig.favorites || {}),
+          ...(isPlainObject(parsed.favorites) ? parsed.favorites : {}),
+        },
+        autoExecute: {
+          ...(defaultConfig.autoExecute || {}),
+          ...(isPlainObject(parsed.autoExecute) ? parsed.autoExecute : {}),
+        },
+        viewer: {
+          ...(defaultConfig.viewer || {}),
+          ...(isPlainObject(parsed.viewer) ? parsed.viewer : {}),
+        },
+        board: {
+          ...(defaultConfig.board || {}),
+          ...(isPlainObject(parsed.board) ? parsed.board : {}),
+        },
+      };
+
+      return merged;
     }
 
     // ユーザーの優先テーマを検知（アクセシビリティ対応）
@@ -2988,7 +3536,6 @@ class StyleThemeManager {
     #generateThemeStyles() {
         const { light, dark } = this.#config.style.themes;
         return `
-            :root { transition: --ss-body-bg 0.3s ease, --ss-text-color 0.3s ease; }
             :root[data-theme="light"] {
                 --ss-body-bg: #ffffff;
                 --ss-text-color: ${light.color || '#333333'};
@@ -3111,8 +3658,9 @@ class StyleThemeManager {
         document.head.appendChild(styleEl);
 
         window.matchMedia('(prefers-contrast: high)').addEventListener('change', (e) => {
-            if (e.matches) this.#currentTheme = 'high-contrast';
-            this.#applyTheme();
+          if (e.matches) this.#currentTheme = 'high-contrast';
+          else this.#currentTheme = localStorage.getItem('ss-theme') || this.#detectPreferredTheme();
+          this.#applyTheme();
         });
     }
 
@@ -3120,22 +3668,6 @@ class StyleThemeManager {
     #applyTheme() {
         document.documentElement.setAttribute('data-theme', this.#currentTheme);
         if (this.#themeButton) this.#themeButton.textContent = this.#themeStates[this.#currentTheme].icon;
-
-        const root = document.documentElement;
-        const styles = {
-            '--ss-body-bg': this.#currentTheme === 'light' ? '#ffffff' :
-                           this.#currentTheme === 'dark' ? this.#config.style.themes.dark.backgroundColor || '#1a1a1a' :
-                           '#000000',
-            '--ss-text-color': this.#currentTheme === 'light' ? this.#config.style.themes.light.color || '#333333' :
-                             this.#currentTheme === 'dark' ? this.#config.style.themes.dark.color || '#e0e0e0' :
-                             '#ffffff',
-            '--ss-font-family': this.#config.style.fontFamily || 'inherit',
-            '--ss-font-size': this.#config.style.fontSize || '100%',
-            '--ss-line-height': this.#config.style.lineHeight || '150%',
-            '--ss-width': this.#config.style.width || '90%'
-        };
-
-        Object.entries(styles).forEach(([key, value]) => root.style.setProperty(key, value));
     }
 
     // テーマ切り替えボタンを追加
@@ -3195,9 +3727,10 @@ class StyleThemeManager {
 // コンフィグエディターのCSS管理
 class SettingsEditorStyles {
     static #styleElement = null;
+    static #isInitialized = false;
 
     static init() {
-        if (this.#styleElement) return;
+        if (this.#isInitialized) return;
 
         const styleSheet = `
             :root {
@@ -3250,9 +3783,8 @@ class SettingsEditorStyles {
             .se-settings-button:hover { background-color: var(--se-hover-bg); transform: translateY(-1px); }
         `;
 
-        this.#styleElement = document.createElement('style');
-        this.#styleElement.textContent = styleSheet;
-        document.head.appendChild(this.#styleElement);
+        this.#styleElement = ensureStyleElement('settings-editor-styles', styleSheet);
+        this.#isInitialized = true;
     }
 
 }
@@ -3279,13 +3811,31 @@ class ConfigManager {
 
     // コンフィグをローカルストレージに保存
     saveConfig(config) {
-        localStorage.setItem(this.#storageKey, JSON.stringify(config));
+      localStorage.setItem(this.#storageKey, JSON.stringify(config));
+
+      // 同一タブ用の通知（storageイベントは同一タブで発火しないため）
+      window.dispatchEvent(new CustomEvent('arcadia-config-updated', {
+        detail: {
+          key: this.#storageKey,
+          config
+        }
+      }));
     }
 
     // コンフィグをリセット
     resetConfig() {
-        localStorage.removeItem(this.#storageKey);
-        return JSON.parse(JSON.stringify(this.#defaultConfig));
+      localStorage.removeItem(this.#storageKey);
+
+      // リセットも通知したいならここも（任意）
+      window.dispatchEvent(new CustomEvent('arcadia-config-updated', {
+        detail: {
+          key: this.#storageKey,
+          config: null,
+          reset: true
+        }
+      }));
+
+      return JSON.parse(JSON.stringify(this.#defaultConfig));
     }
 
     // 編集可能なフィールドを返す
@@ -3385,81 +3935,136 @@ class SettingsEditor {
 
     // 設定画面のUIを作成
     #createSettingsUI() {
-        const container = document.createElement('div');
-        container.id = 'settings-editor';
-        container.className = 'se-container';
-        container.innerHTML = `
-            <div class="se-fixed-header">
-                <div class="se-header">
-                    <h2 class="se-title">設定編集</h2>
-                    <button id="close-settings" class="se-close-button">✖</button>
-                </div>
-            </div>
-            <div class="se-buttons-container">
-                <div class="se-form-section buttons">
-                    <button class="se-button se-button-primary" data-action="save">保存</button>
-                    <button class="se-button se-button-danger" data-action="reset">リセット</button>
-                </div>
-            </div>
-            <div class="se-lists-container"></div>
-        `;
+      const container = el("div", { id: "settings-editor", class: "se-container" });
 
-        const content = container.querySelector('.se-lists-container');
-        const editableFields = this.#configManager.getEditableFields();
-        Object.entries(editableFields).forEach(([category, categoryData]) => {
-            const categoryDiv = document.createElement('div');
-            categoryDiv.className = 'se-category';
-            categoryDiv.innerHTML = `
-                <div class="se-category-header" data-category="${category}">
-                    <h3 class="se-category-title">${categoryData.displayName} ▶</h3>
-                </div>
-                <div class="se-form-section" style="display: none;"></div>
-            `;
+      const fixedHeader = el("div", { class: "se-fixed-header" },
+        el("div", { class: "se-header" },
+          el("h2", { class: "se-title", text: "設定編集" }),
+          el("button", { id: "close-settings", class: "se-close-button", type: "button", text: "✖" })
+        )
+      );
 
-            const section = categoryDiv.querySelector('.se-form-section');
-            if (categoryData.fields) {
-                categoryData.fields.forEach(field => section.appendChild(this.#createField(field, category)));
-            }
-            if (categoryData.userInfo) {
-                const subHeader = document.createElement('h4');
-                subHeader.textContent = 'ユーザーデータ';
-                section.appendChild(subHeader);
-                categoryData.userInfo.forEach(field => section.appendChild(this.#createField(field, `${category}.userInfo`)));
-            }
-            if (categoryData.themes) {
-                Object.entries(categoryData.themes).forEach(([themeName, themeFields]) => {
-                    const subHeader = document.createElement('h4');
-                    subHeader.textContent = themeName === 'light' ? 'ライトテーマ' : 'ダークテーマ';
-                    section.appendChild(subHeader);
-                    themeFields.forEach(field => section.appendChild(this.#createField(field, `${category}.themes.${themeName}`)));
-                });
-            }
-            content.appendChild(categoryDiv);
-        });
+      const buttonsContainer = el("div", { class: "se-buttons-container" },
+        el("div", { class: "se-form-section buttons" },
+          el("button", { class: "se-button se-button-primary", dataset: { action: "save" }, type: "button", text: "保存" }),
+          el("button", { class: "se-button se-button-danger", dataset: { action: "reset" }, type: "button", text: "リセット" }),
+        )
+      );
 
-        return container;
+      const lists = el("div", { class: "se-lists-container" });
+
+      const editableFields = this.#configManager.getEditableFields();
+      for (const [category, categoryData] of Object.entries(editableFields)) {
+        const categoryDiv = el("div", { class: "se-category" });
+
+        const header = el("div", { class: "se-category-header", dataset: { category } },
+          el("h3", { class: "se-category-title", text: `${categoryData.displayName} ▶` })
+        );
+
+        const section = el("div", { class: "se-form-section", style: { display: "none" } });
+
+        if (categoryData.fields) {
+          for (const field of categoryData.fields) section.appendChild(this.#createField(field, category));
+        }
+
+        if (categoryData.userInfo) {
+          section.appendChild(el("h4", { text: "ユーザーデータ" }));
+          for (const field of categoryData.userInfo) section.appendChild(this.#createField(field, `${category}.userInfo`));
+        }
+
+        if (categoryData.themes) {
+          for (const [themeName, themeFields] of Object.entries(categoryData.themes)) {
+            section.appendChild(el("h4", { text: themeName === "light" ? "ライトテーマ" : "ダークテーマ" }));
+            for (const field of themeFields) section.appendChild(this.#createField(field, `${category}.themes.${themeName}`));
+          }
+        }
+
+        categoryDiv.append(header, section);
+        lists.appendChild(categoryDiv);
+      }
+
+      container.append(fixedHeader, buttonsContainer, lists);
+      return container;
     }
 
     // 設定項目のフィールドを作成
     #createField(field, category) {
-        const div = document.createElement('div');
-        div.className = 'se-form-grid';
-        const fullPath = `${category}.${field.id}`;
-        const value = this.#getNestedValue(this.#currentConfig, fullPath);
+      const div = el("div", { class: "se-form-grid" });
 
-        div.innerHTML = `
-            <label for="${fullPath.replace(/\./g, '-')}" title="${field.description || ''}">${field.label}</label>
-            <input id="${fullPath.replace(/\./g, '-')}" data-path="${fullPath}"
-                   type="${field.type === 'checkbox' ? 'checkbox' : field.type === 'password' ? 'password' : 'text'}"
-                   ${field.type === 'checkbox' ? `checked="${this.#validateInput(value, 'checkbox', field.value)}"` : `value="${this.#validateInput(value, field.type, field.value)}"`}
-                   ${field.type === 'number' ? 'min="0"' : ''}>
-        `;
-        return div;
+      const fullPath = `${category}.${field.id}`;
+      const idAttr = fullPath.replace(/\./g, "-");
+
+      const rawValue = this.#getNestedValue(this.#currentConfig, fullPath);
+      const value = this.#validateInput(rawValue, field.type, field.value);
+
+      const inputType =
+        field.type === "checkbox" ? "checkbox" :
+        field.type === "password" ? "password" :
+        field.type === "number" ? "number" : "text";
+
+      const label = el("label", {
+        htmlFor: idAttr,
+        title: field.description || "",
+        text: field.label
+      });
+
+      const input = el("input", {
+        id: idAttr,
+        type: inputType,
+        dataset: { path: fullPath }
+      });
+
+      if (inputType === "checkbox") {
+        input.checked = !!value;
+      } else {
+        input.value = String(value ?? "");
+      }
+
+      if (inputType === "number") {
+        input.min = "0";
+      }
+
+      div.append(label, input);
+      return div;
+    }
+
+    // 2) editableFields から field 定義を引く（defaultValue/description取得の中核）
+    #findFieldDefByPath(path) {
+        const editable = this.#configManager.getEditableFields();
+        const parts = path.split('.');
+        if (parts.length < 2) return null;
+
+        const categoryKey = parts[0];
+        const categoryData = editable?.[categoryKey];
+        if (!categoryData) return null;
+
+        // themes の場合: style.themes.light.color みたいな形
+        if (parts.length >= 4 && parts[1] === 'themes') {
+            const themeName = parts[2];
+            const fieldId = parts[3];
+            const themeFields = categoryData.themes?.[themeName];
+            if (!Array.isArray(themeFields)) return null;
+            return themeFields.find(f => f.id === fieldId) || null;
+        }
+
+        // userInfo の場合: posting.userInfo.name
+        if (parts.length >= 3 && parts[1] === 'userInfo') {
+            const fieldId = parts[2];
+            const list = categoryData.userInfo;
+            if (!Array.isArray(list)) return null;
+            return list.find(f => f.id === fieldId) || null;
+        }
+
+        // 通常 fields の場合: viewer.styleBar / ssList.pvThreshold 等
+        const fieldId = parts[1];
+        const list = categoryData.fields;
+        if (!Array.isArray(list)) return null;
+        return list.find(f => f.id === fieldId) || null;
     }
 
     // ネストされたオブジェクトから値を取得
     #getNestedValue(obj, path) {
-        return path.split('.').reduce((acc, part) => acc && acc[part], obj);
+        return path.split('.').reduce((acc, part) => (acc == null ? undefined : acc[part]), obj);
     }
 
     // ネストされたオブジェクトに値を設定
@@ -3508,40 +4113,58 @@ class SettingsEditor {
             const target = e.target;
             if (target.classList.contains('se-close-button')) {
                 editor.style.display = 'none';
-            } else if (target.dataset.action === 'save') {
+                return;
+            }
+
+            if (target.dataset.action === 'save') {
                 const newConfig = JSON.parse(JSON.stringify(this.#currentConfig));
-                editor.querySelectorAll('input').forEach(input => {
+
+                editor.querySelectorAll('input[data-path]').forEach(input => {
                     const path = input.dataset.path;
-                    const value = input.type === 'checkbox' ? input.checked :
-                                 input.type === 'number' ? parseInt(input.value, 10) : input.value;
-                    this.#setNestedValue(newConfig, path, value);
+                    const def = this.#findFieldDefByPath(path);
+                    const fieldType = def?.type || (input.type === 'checkbox' ? 'checkbox' : input.type === 'number' ? 'number' : 'text');
+                    const defaultValue = def?.value;
+
+                    const raw = (fieldType === 'checkbox') ? input.checked : input.value;
+                    const validated = this.#validateInput(raw, fieldType, defaultValue);
+
+                    this.#setNestedValue(newConfig, path, validated);
                 });
+
                 this.#configManager.saveConfig(newConfig);
                 this.#currentConfig = newConfig;
                 alert('設定を保存しました。ページをリロードして反映してください。');
-            } else if (target.dataset.action === 'reset') {
+                return;
+            }
+
+            if (target.dataset.action === 'reset') {
                 this.#currentConfig = this.#configManager.resetConfig();
                 this.#refreshUI();
                 alert('設定をリセットしました。ページをリロードして反映してください。');
-            } else if (target.closest('.se-category-header')) {
-                const header = target.closest('.se-category-header');
-                this.#toggleCategory(header);
+                return;
             }
+
+            const header = target.closest('.se-category-header');
+            if (header) this.#toggleCategory(header);
         });
 
         editor.addEventListener('input', (e) => {
             const input = e.target;
             if (!input.dataset.path) return;
+
             const path = input.dataset.path;
-            const type = input.type === 'checkbox' ? 'checkbox' : input.type === 'number' ? 'number' : 'text';
-            const defaultValue = this.#getNestedValue(this.#configManager.getEditableFields(), path.split('.').slice(0, -1).join('.') + '.' + path.split('.').pop()).value;
-            const value = this.#validateInput(
-                input.type === 'checkbox' ? input.checked : input.value,
-                type,
-                defaultValue
-            );
-            if (input.type === 'checkbox') input.checked = value;
+            const def = this.#findFieldDefByPath(path);
+            if (!def) return; // 定義が取れないなら触らない（落とさない）
+
+            const fieldType = def.type;
+            const defaultValue = def.value;
+
+            const raw = (fieldType === 'checkbox') ? input.checked : input.value;
+            const value = this.#validateInput(raw, fieldType, defaultValue);
+
+            if (fieldType === 'checkbox') input.checked = !!value;
             else input.value = value;
+
             this.#setNestedValue(this.#currentConfig, path, value);
         });
     }
@@ -3583,7 +4206,6 @@ class SettingsEditor {
             }
             editor.style.display = editor.style.display === 'none' ? 'block' : 'none';
             this.#refreshUI(); // 表示時に UI を最新状態に更新
-            SettingsEditorStyles.updateStyles(this.#styleThemeManager?.getCurrentTheme() || document.documentElement.getAttribute('data-theme') || 'light');
         };
 
         document.body.appendChild(button);
@@ -3593,62 +4215,84 @@ class SettingsEditor {
 
 // スパムフィルタリングクラス
 class SpamFilter {
-    #spamPattern = />[A-Za-z]{10,}</;        // 10文字以上の連続英字（HTMLタグ内）
-    #spamLinkPattern = /[A-Za-z]{10,}/;      // 10文字以上の連続英字（リンクテキスト）
+  // 10文字以上の連続英字
+  #longAlpha = /[A-Za-z]{10,}/;
+  // URLっぽいの（おまけ）
+  #urlish = /(https?:\/\/|www\.)/i;
 
-    constructor(config) {
-        this.config = config;
-    }
+  constructor(config) {
+    this.config = config;
+  }
 
-    hideSpamPosts(batchUpdates) {
-        if (!this.config.board.hideSpam) return;
+  hideSpamPosts(batchUpdates) {
+    if (!this.config?.board?.hideSpam) return;
 
-        const updates = [];
-        // #table内の投稿行（tr.bgc）を対象に
-        document.querySelectorAll('#table tr.bgc').forEach(row => {
-            // タイトル部分のリンクを取得
-            const link = row.querySelector('td:nth-child(3) b a'); // 3列目がタイトル
-            if (link) {
-                const linkText = link.textContent; // リンクのテキスト
-                const linkHTML = link.innerHTML;   // リンクのHTML（タグ含む）
+    const updates = [];
 
-                // スパム判定: リンクテキストまたはHTMLに10文字以上の連続英字が含まれる場合
-                if (this.#spamPattern.test(linkHTML) || this.#spamLinkPattern.test(linkText)) {
-                    updates.push(() => row.style.display = 'none'); // 行全体を非表示
-                }
-            }
-        });
+    document.querySelectorAll('#table tr.bgc').forEach(row => {
+      // まずは行内のリンクを一個拾う（列固定依存を減らす）
+      const link = row.querySelector('a');
+      if (!link) return;
 
-        // バッチ処理でDOM更新を実行
-        batchUpdates(updates);
-    }
+      const text = (link.textContent || '').trim();
+      if (!text) return;
+
+      // 誤爆抑制：英字10連 かつ (URLっぽい or 英字率が高い)
+      const alphaCount = (text.match(/[A-Za-z]/g) || []).length;
+      const ratio = alphaCount / Math.max(text.length, 1);
+
+      const isSpam =
+        this.#longAlpha.test(text) &&
+        (this.#urlish.test(text) || ratio > 0.7);
+
+      if (isSpam) updates.push(() => (row.style.display = 'none'));
+    });
+
+    batchUpdates(updates);
+  }
 }
 
 // フォーム自動入力クラス
 class FormFiller {
-    #inputMappings = {
-        'name': ['name', 'iname'],
-        'tripcode': ['trip', 'itrip'],
-        'password': ['password', 'ipass']
-    };
+  #inputMappings = {
+    name: ['name', 'iname'],
+    tripcode: ['trip', 'itrip'],
+    password: ['password', 'ipass'],
+  };
 
-    constructor(config) {
-        this.config = config;
-    }
+  constructor(config) {
+    this.config = config;
+  }
 
-    autoFillForms(batchUpdates) {
-        if (!this.config.posting.autoFill) return;
-        const updates = [];
-        document.querySelectorAll('input').forEach(input => {
-            for (const [infoKey, nameAttrs] of Object.entries(this.#inputMappings)) {
-                if (nameAttrs.includes(input.name)) {
-                    updates.push(() => input.defaultValue = this.config.posting.userInfo[infoKey]);
-                    break;
-                }
-            }
+  autoFillForms(batchUpdates) {
+    if (!this.config?.posting?.autoFill) return;
+
+    const userInfo = this.config?.posting?.userInfo;
+    if (!userInfo) return;
+
+    const updates = [];
+
+    document.querySelectorAll('input').forEach(input => {
+      const nameAttr = input.name;
+      if (!nameAttr) return;
+
+      for (const [infoKey, names] of Object.entries(this.#inputMappings)) {
+        if (!names.includes(nameAttr)) continue;
+
+        const v = userInfo[infoKey];
+        if (v == null) break;
+
+        updates.push(() => {
+          // 既に入力がある場合は尊重したいなら条件を追加してもいい
+          input.defaultValue = v;
+          if (!input.value) input.value = v; // “空なら補完”
         });
-        batchUpdates(updates); // パフォーマンス最適化のためにバッチ処理を利用
-    }
+        break;
+      }
+    });
+
+    batchUpdates(updates);
+  }
 }
 
 // 掲示板システムの機能を管理する統合クラス
@@ -3691,7 +4335,17 @@ class BoardManager {
 
     // 設定変更を監視して反映
     #setupConfigListener() {
-        window.addEventListener('storage', this.#handleConfigChange);
+      // storage は別タブ用
+      window.addEventListener('storage', this.#handleConfigChange);
+
+      // 同一タブ用（ConfigManager.saveConfig か SettingsEditor 保存時に dispatch する）
+      window.addEventListener('arcadia-config-updated', () => {
+        const newConfig = this.#configManager.loadConfig();
+        this.#spamFilter.config = newConfig;
+        this.#formFiller.config = newConfig;
+        // ここで「即反映」したいなら refresh か handler 再実行
+        // this.#refreshPage();
+      });
     }
 
     #handleConfigChange = (e) => {
@@ -3723,7 +4377,7 @@ class BoardManager {
 
     // ページタイプを判定
     #getPageType(pathname) {
-        if (location.href.includes('file')) return 'novels';
+        //if (location.href.includes('file')) return 'novels';
         for (const [type, { path }] of this.#routes.entries()) {
             if (pathname === path) return type; // 完全一致を確認
         }
@@ -3780,29 +4434,41 @@ class BoardManager {
     }
 
     init() {
-        if (this.#isInitialized) return; // 多重実行を防止
-        setTimeout(() => { // 0ms遅延で非同期化
-            if (this.#checkRedirect()) return;
+      if (this.#isInitialized) return;
 
-            const params = new URLSearchParams(location.search);
-            const pathname = location.pathname;
-            const subType = params.get('act') || '*';
+      const run = () => {
+        if (this.#isInitialized) return;
+        if (this.#checkRedirect()) return;
 
-            const pageType = this.#getPageType(pathname);
-            if (!pageType) {
-                console.log('未対応のページタイプ:', pathname);
-                return;
-            }
+        const params = new URLSearchParams(location.search);
+        const pathname = location.pathname;
+        const subType = params.get('act') || '*';
 
-            // 検索パラメータを保存
-            const currentConfig = this.#configManager.loadConfig();
-            currentConfig.searchParm = params;
-            this.#configManager.saveConfig(currentConfig);
+        const pageType = this.#getPageType(pathname);
+        if (!pageType) return;
 
-            this.#executeHandler(pageType, subType);
-        }, 0);
-        this.#isInitialized = true;
+        const currentConfig = this.#configManager.loadConfig();
+        currentConfig.searchParm = params;
+        this.#configManager.saveConfig(currentConfig);
+
+        this.#executeHandler(pageType, subType);
+
+        this.#isInitialized = true; // 成功後に立てる
+      };
+
+      // DOM 準備を待ってから初期化（setTimeout(0)の代替）
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', run, { once: true });
+      } else {
+        run();
+      }
+
+      // bfcache 復帰時に初期化が飛ぶケースへの保険
+      window.addEventListener('pageshow', (e) => {
+        if (e.persisted) run();
+      }, { once: true });
     }
+
 
 }
 
