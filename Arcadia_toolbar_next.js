@@ -613,40 +613,37 @@ class ArcadiaDOMParser {
    * @property {Element[]}   bElements      row 内の全 <b> 要素
    */
   parseSSRow(row, isChiraura = false) {
-    // テーブル再構築後の実際のセル構造（チラ裏・通常共通）:
-    //   cells[0] = タイトルtd  ← all= リンク・タイトルはここ
-    //   cells[1] = 投稿者td
-    //   cells[2] = 記事数td など
-    // ※ チラ裏は NO.列がコメントアウトされているため cells[0] がタイトル
-    // ※ 通常カテゴリも TableRebuilder で menuCell 抜き取り後は cells[0] がタイトル
-    const titleTd = row.cells?.[0];
-    if (!titleTd) return null;
+    // タイトルtdの特定: セルインデックスではなく all= リンクを含む td を探す
+    //
+    // カテゴリ別の実際のセル構造（menuCell抜き取り後）:
+    //   チラ裏: cells[0]=NO, cells[1]=タイトル(all=あり), cells[2]=投稿者 ...
+    //   通常:   cells[0]=元作品, cells[1]=NO, cells[2]=タイトル(all=あり), ...
+    // → インデックスが異なるため「all=を持つtd」を動的に探すのが正解
+    const ALL_SEL = 'a[href*="?all="], a[href*="&all="], a[href*="?amp;all="], a[href*="&amp;all="]';
+    const aAll = row.querySelector(ALL_SEL);
 
-    // タイトル・articleId は cells[0] から取得
-    const anchor  = titleTd.querySelector('a');
-    const bold    = titleTd.querySelector('b');
-    const titleEl = anchor || bold;
-    const title   = titleEl?.textContent?.trim() || titleTd.textContent?.trim() || '';
+    // タイトルtd = aAll の親 td
+    const titleTd = aAll?.closest('td') ?? null;
+
+    // タイトル文字列: aAll があればその親b/aのテキスト、なければ行全体から
+    const titleEl = titleTd?.querySelector('b') || titleTd?.querySelector('a') || titleTd;
+    const title   = titleEl?.textContent?.trim() || '';
     if (!title) return null;
 
-    // 記事ID（all= リンクから抽出）: cells[0] 内を探す
-    const aAll = titleTd.querySelector(
-      'a[href*="?all="], a[href*="&all="], a[href*="?amp;all="], a[href*="&amp;all="]'
-    );
+    // 記事ID（all= の値）
     let articleId = null;
     if (aAll) {
-      const href = aAll.getAttribute('href') || '';
-      const m = href.match(/[?&](?:amp;)?all=([^&]+)/);
+      const m = (aAll.getAttribute('href') || '').match(/[?&](?:amp;)?all=([^&]+)/);
       if (m) articleId = m[1];
     }
 
-    // <b> 要素群からカウントを取得（row 全体から取得）
+    // <b> 要素群: row 全体から取得
     const bElements = Array.from(row.getElementsByTagName('b'));
 
-    // チラシの裏は b が1つ（タイトルのみ）なのでカウント不要
+    // チラ裏は記事数bのみ / 通常は 記事数・感想数・PV の3つ
     let articleCount = 0, impressionCount = 0, pv = 0;
     if (!isChiraura && bElements.length >= 3) {
-      // Arcadia: ...タイトル b... <b>記事数</b><b>感想数</b><b>PV</b> の順
+      // Arcadia: b[last-2]=記事数, b[last-1]=感想数, b[last]=PV
       articleCount    = this.#toInt(bElements[bElements.length - 3]?.textContent);
       impressionCount = this.#toInt(bElements[bElements.length - 2]?.textContent);
       pv              = this.#toInt(bElements[bElements.length - 1]?.textContent);
@@ -663,6 +660,7 @@ class ArcadiaDOMParser {
       pvPerArticle,
       hasDirectLink: !!aAll,
       bElements,
+      titleTd,  // チラ裏での全話リンク差し替えに使用
     };
   }
 
@@ -2154,7 +2152,9 @@ class ListRenderer {
     const { articleId, bElements } = rowData;
 
     if (isChiraura) {
-      // タイトル <b> をリンクに差し替え（b がない行はスキップ、セル追加は継続）
+      // 記事数 <b>（bElements[-1]）をall_msgリンクに差し替える（v3準拠）
+      // チラ裏: b[0]=タイトルb(dumpリンク含む), b[-1]=記事数b("N")
+      // 記事数の数字がクリックで全話ページに飛ぶリンクになる
       const bLast = bElements[bElements.length - 1];
       if (bLast) {
         const nodes = Array.from(bLast.childNodes);
@@ -2342,7 +2342,7 @@ class ListFormatter {
     return {
       isCategory18: params.get('cate') === '18',
       isChiraura:   params.get('cate') === 'tiraura',
-      isList:       params.get('act') === 'list',
+      isList:       params.get('act') === 'list' || params.get('act') === 'search',
     };
   }
 
