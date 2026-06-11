@@ -1,11 +1,15 @@
+
 // ==UserScript==
 // @name         ArcadiaToolBarNext
 // @namespace    ArcadiaToolBarNext
-// @description  小説の体裁を操作できるバーがＰＯＰしてくれます。(Arcadia専用) - Next構成版
+// @description  小説の体裁を操作できるバーがＰＯＰしてくれます。(Arcadia専用) - Next構成版 (修正完了版)
 // @include      http://www.mai-net.net/bbs/*
+// @include      https://www.mai-net.net/bbs/*
 // @include      http://mai-net.ath.cx/bbs/*
-// @version      4.00-dev
+// @include      https://mai-net.ath.cx/bbs/*
+// @version      5.01
 // ==/UserScript==
+
 
 /* ==================================================
  * ArcadiaToolBarNext — 完成版
@@ -53,7 +57,6 @@
 
 /**
  * deepFreeze - オブジェクトを再帰的に凍結する
- * （既存実装から移植・同一ロジック）
  * @param {object} obj
  * @returns {Readonly<object>}
  */
@@ -142,8 +145,6 @@ const CONFIG = deepFreeze({
 
 /**
  * el - タグ名・props・子要素からDOM要素を生成するヘルパー
- * （既存実装から移植・同一ロジック）
- *
  * @param {string} tag
  * @param {object} [props]
  * @param {...(Node|string|null|undefined)} children
@@ -172,8 +173,6 @@ function el(tag, props = {}, ...children) {
 
 /**
  * ensureStyleElement - style要素を idで管理する（重複防止）
- * （既存実装から移植・同一ロジック）
- *
  * @param {string} styleId
  * @param {string} cssText
  * @returns {HTMLStyleElement}
@@ -193,7 +192,6 @@ function ensureStyleElement(styleId, cssText) {
 
 /**
  * debounce - 関数呼び出しを遅延・集約する
- *
  * @param {Function} fn
  * @param {number} delay  ミリ秒
  * @returns {Function}
@@ -208,7 +206,6 @@ function debounce(fn, delay) {
 
 /**
  * throttle - 一定間隔で最大1回だけ関数を呼び出す（先頭実行）
- *
  * @param {Function} fn
  * @param {number} interval  ミリ秒
  * @returns {Function}
@@ -226,9 +223,6 @@ function throttle(fn, interval) {
 
 /**
  * rafChunk - 配列をrAFチャンク処理する
- * 大量行処理で UI をブロックしない。
- * （既存 #processRowsInChunks から汎用化）
- *
  * @param {ArrayLike} items  処理対象
  * @param {Function}  fn     (item, index) => void
  * @param {number}    [size=40]  1チャンクあたりの件数
@@ -247,7 +241,6 @@ function rafChunk(items, fn, size = 40) {
 
 /**
  * fragment - DocumentFragmentを生成して子要素を追加するヘルパー
- *
  * @param {...(Node|null|undefined)} children
  * @returns {DocumentFragment}
  */
@@ -262,8 +255,6 @@ function fragment(...children) {
 
 /**
  * safeText - テキストノードとして安全にテキストを設定する
- * XSS対策として innerHTML の代わりに使う。
- *
  * @param {string} s
  * @returns {Text}
  */
@@ -343,6 +334,9 @@ const StorageManager = (() => {
       autoExecute: merge(defaultConfig.autoExecute || {}, stored.autoExecute),
       viewer:      merge(defaultConfig.viewer       || {}, stored.viewer),
       board:       merge(defaultConfig.board        || {}, stored.board),
+      // 修正：ssList と posting のマージ処理漏れを解消
+      ssList:      merge(defaultConfig.ssList       || {}, stored.ssList),
+      posting:     merge(defaultConfig.posting      || {}, stored.posting),
     };
   }
 
@@ -397,7 +391,6 @@ const StorageManager = (() => {
   function saveFavorites(favorites) {
     localStorage.setItem(KEYS.favorites, JSON.stringify(favorites));
     window.dispatchEvent(new CustomEvent('arcadia:favorites-updated', { detail: { favorites } }));
-    // 旧スクリプト互換: 既存の 'favorites-updated' イベントも発火
     window.dispatchEvent(new Event('favorites-updated'));
   }
 
@@ -431,12 +424,10 @@ const StorageManager = (() => {
     return safeParse(localStorage.getItem(KEYS.styleBar), null);
   }
 
-  /** StyleControlBar の設定を保存する */
   function saveStyleBarSettings(settings) {
     localStorage.setItem(KEYS.styleBar, JSON.stringify(settings));
   }
 
-  /** StyleControlBar の設定を削除する */
   function removeStyleBarSettings() {
     localStorage.removeItem(KEYS.styleBar);
   }
@@ -470,7 +461,6 @@ const StorageManager = (() => {
  *   arcadia:list-rebuilt        ← テーブル再構築完了
  * -------------------------------------------------- */
 const EventBus = (() => {
-  /** @type {Map<string, Set<Function>>} */
   const listeners = new Map();
 
   /**
@@ -537,7 +527,6 @@ const EventBus = (() => {
  * （責任者：テーブル再構築を行う Renderer / Formatter）
  * -------------------------------------------------- */
 class DOMCache {
-  /** @type {WeakMap<Element, Map<string, Element|null>>} */
   #cache = new WeakMap();
 
   /**
@@ -562,7 +551,6 @@ class DOMCache {
     this.#cache.delete(root);
   }
 
-  /** 全キャッシュを破棄する（テーブル再構築後に呼ぶ）。 */
   clear() {
     this.#cache = new WeakMap();
   }
@@ -594,6 +582,17 @@ class DOMCache {
  * ※ DOM構造は Arcadia の HTML を実測して随時更新すること。
  * -------------------------------------------------- */
 class ArcadiaDOMParser {
+  #domCache;
+
+  // 修正：DOMCache を受け取り、パース処理をキャッシュ化
+  constructor(domCache = null) {
+    this.#domCache = domCache;
+  }
+
+  #query(root, selector) {
+    if (this.#domCache) return this.#domCache.query(root, selector);
+    return root?.querySelector(selector);
+  }
 
   /**
    * SS一覧の1行をパースして構造化データを返す。
@@ -620,13 +619,10 @@ class ArcadiaDOMParser {
     //   通常:   cells[0]=元作品, cells[1]=NO, cells[2]=タイトル(all=あり), ...
     // → インデックスが異なるため「all=を持つtd」を動的に探すのが正解
     const ALL_SEL = 'a[href*="?all="], a[href*="&all="], a[href*="?amp;all="], a[href*="&amp;all="]';
-    const aAll = row.querySelector(ALL_SEL);
+    const aAll = this.#query(row, ALL_SEL);
 
-    // タイトルtd = aAll の親 td
     const titleTd = aAll?.closest('td') ?? null;
-
-    // タイトル文字列: aAll があればその親b/aのテキスト、なければ行全体から
-    const titleEl = titleTd?.querySelector('b') || titleTd?.querySelector('a') || titleTd;
+    const titleEl = titleTd ? (this.#query(titleTd, 'b') || this.#query(titleTd, 'a') || titleTd) : null;
     const title   = titleEl?.textContent?.trim() || '';
     if (!title) return null;
 
@@ -665,7 +661,7 @@ class ArcadiaDOMParser {
   }
 
   /**
-   * メイン/捜索掲示板の1行をパースして構造化データを返す。
+   * メイン/捜捜索掲示板の1行をパースして構造化データを返す。
    *
    * @param {HTMLTableRowElement} row
    * @returns {MainRowData|null}
@@ -676,7 +672,7 @@ class ArcadiaDOMParser {
   parseMainRow(row) {
     const tdSecond = row.cells?.[1];
     if (!tdSecond) return null;
-    const anchor = tdSecond.querySelector('a');
+    const anchor = this.#query(tdSecond, 'a');
     const title  = anchor?.textContent?.trim() || tdSecond.textContent?.trim() || '';
     if (!title) return null;
     return { title };
@@ -690,7 +686,7 @@ class ArcadiaDOMParser {
    * @returns {HTMLTableCellElement|null}
    */
   parseCommentTableCell(commentTable) {
-    return commentTable?.querySelector('tbody td') || null;
+    return this.#query(commentTable, 'tbody td') || null;
   }
 
   /**
@@ -736,7 +732,7 @@ class ArcadiaDOMParser {
    * @returns {{ prev: string|null, next: string|null }}
    */
   parseAdjacentArticles(currentArticle) {
-    const table = document.querySelector('#table');
+    const table = this.#query(document, '#table');
     if (!table) return { prev: null, next: null };
 
     const rows = table.getElementsByTagName('tr');
@@ -745,8 +741,8 @@ class ArcadiaDOMParser {
 
     let currentIndex = -1;
     for (let i = 0; i < rows.length; i++) {
-      const a = rows[i].querySelector(`a[href*="n=${esc}#kiji"]`)
-             || rows[i].querySelector(`a[href*="n=${esc}"]`);
+      const a = this.#query(rows[i], `a[href*="n=${esc}#kiji"]`)
+             || this.#query(rows[i], `a[href*="n=${esc}"]`);
       if (a) { currentIndex = i; break; }
     }
     if (currentIndex === -1) return { prev: null, next: null };
@@ -793,7 +789,7 @@ class ArcadiaDOMParser {
    */
   findMainListTable() {
     return (
-      document.getElementById('table') ||
+      this.#query(document, '#table') ||
       Array.from(document.getElementsByTagName('table')).find(t =>
         t.classList.contains('brdr') &&
         ['90%', '100%'].includes(t.getAttribute('width')) &&
@@ -813,7 +809,7 @@ class ArcadiaDOMParser {
    */
   extractMenuCell(listTable) {
     // ヘッダ行 (tr.bga) の先頭 td を削除
-    const headerRow = listTable.querySelector('tr.bga');
+    const headerRow = this.#query(listTable, 'tr.bga');
     if (headerRow?.firstElementChild) headerRow.firstElementChild.remove();
 
     // rowspan 付きメニュー td を tr.bgc から探して取り外す
@@ -854,7 +850,6 @@ class ArcadiaDOMParser {
  *   登録ワード「転生」→「悪役令嬢」にはマッチしない
  * -------------------------------------------------- */
 class FavoriteMatcher {
-  /** @type {Map<string, string[]>} category -> word[] */
   #items = new Map();
 
   /**
@@ -906,7 +901,6 @@ class FavoriteMatcher {
  * ListRenderer が行を非表示にする判断に使う。
  * -------------------------------------------------- */
 class NGMatcher {
-  /** @type {string[]} */
   #words = [];
 
   /**
@@ -928,7 +922,7 @@ class NGMatcher {
 }
 
 /* ==================================================
- * STYLES  (CSS定数)
+ * STYLES (CSS定数)
  * ================================================== */
 
 /**
@@ -937,7 +931,6 @@ class NGMatcher {
  * テーマ変数 (--ss-*) は ThemeManager が定義する。
  */
 const CSS_DEFS = {
-
   /** SS一覧・メイン一覧 共通スタイル */
   list: `
     :root {
@@ -1025,6 +1018,8 @@ const CSS_DEFS = {
       opacity:0; transform:translateY(-10px);
       transition:opacity 300ms ease,transform 300ms ease;
       display:none;
+      /* 修正：ポップアップの表示幅を安定化 */
+      max-width:90vw; width:350px;
     }
     #tableind td { font-size:13px !important; }
     #tableind a  { color:var(--index-link); text-decoration:none; }
@@ -1123,91 +1118,91 @@ const CSS_DEFS = {
 
   /** StyleControlBar スタイル */
   styleBar: `
-  :root[data-theme="light"] {
-    --scb-bar-bg:var(--ss-list-bg,#fff7d4); --scb-text:var(--ss-text-color,#333);
-    --scb-border:var(--ss-border-color,#aaaacc); --scb-select-bg:var(--ss-input-bg,#fff);
-    --scb-select-text:var(--ss-input-text,#333); --scb-hover-bg:var(--ss-hover-bg,#ffe4b5);
-    --scb-switch-bg:var(--ss-header-bg,#ddddff); --scb-switch-text:var(--ss-header-text,#333);
-  }
-  :root[data-theme="dark"] {
-    --scb-bar-bg:var(--ss-list-bg,#2a2620); --scb-text:var(--ss-text-color,#e0e0e0);
-    --scb-border:var(--ss-border-color,#444); --scb-select-bg:var(--ss-input-bg,#333);
-    --scb-select-text:var(--ss-input-text,#fff); --scb-hover-bg:var(--ss-hover-bg,#3d3630);
-    --scb-switch-bg:var(--ss-header-bg,#20203d); --scb-switch-text:var(--ss-header-text,#fff);
-  }
-  .bar_bas{position:fixed;top:90px;right:20px;padding:10px;background-color:var(--scb-bar-bg);border:1px solid var(--scb-border);border-radius:4px;z-index:999;display:none;color:var(--scb-text);width:120px;line-height:250%;font-size:12px;text-align:right;}
-  .bar_swh{position:fixed;top:50px;right:20px;padding:8px 16px;background-color:var(--scb-switch-bg);color:var(--scb-switch-text);border:1px solid var(--scb-border);border-radius:4px;cursor:pointer;z-index:1000;transition:background-color 0.2s ease;font-size:12px;}
-  .bar_swh:hover{background-color:var(--scb-hover-bg);}
-  .bar_sel{background-color:var(--scb-select-bg);color:var(--scb-select-text);border:1px solid var(--scb-border);border-radius:3px;padding:2px;margin:2px;width:120px;font-size:13px;}
-  .spn_sel{display:inline-block;margin:2px 4px;color:var(--scb-text);width:100%;line-height:250%;font-size:12px;}
-  .spn_inp{display:inline-block;margin:2px 4px;color:var(--scb-text);line-height:250%;font-size:12px;}
-  .spn_inp input[type="checkbox"]{margin-right:4px;vertical-align:middle;}
-  .reset-button{background-color:var(--scb-switch-bg);color:var(--scb-switch-text);border:1px solid var(--scb-border);border-radius:4px;padding:4px 8px;margin:4px;cursor:pointer;font-size:12px;}
-  .reset-button:hover{background-color:var(--scb-hover-bg);}
-`,
+    :root[data-theme="light"] {
+      --scb-bar-bg:var(--ss-list-bg,#fff7d4); --scb-text:var(--ss-text-color,#333);
+      --scb-border:var(--ss-border-color,#aaaacc); --scb-select-bg:var(--ss-input-bg,#fff);
+      --scb-select-text:var(--ss-input-text,#333); --scb-hover-bg:var(--ss-hover-bg,#ffe4b5);
+      --scb-switch-bg:var(--ss-header-bg,#ddddff); --scb-switch-text:var(--ss-header-text,#333);
+    }
+    :root[data-theme="dark"] {
+      --scb-bar-bg:var(--ss-list-bg,#2a2620); --scb-text:var(--ss-text-color,#e0e0e0);
+      --scb-border:var(--ss-border-color,#444); --scb-select-bg:var(--ss-input-bg,#333);
+      --scb-select-text:var(--ss-input-text,#fff); --scb-hover-bg:var(--ss-hover-bg,#3d3630);
+      --scb-switch-bg:var(--ss-header-bg,#20203d); --scb-switch-text:var(--ss-header-text,#fff);
+    }
+    .bar_bas{position:fixed;top:90px;right:20px;padding:10px;background-color:var(--scb-bar-bg);border:1px solid var(--scb-border);border-radius:4px;z-index:999;display:none;color:var(--scb-text);width:120px;line-height:250%;font-size:12px;text-align:right;}
+    .bar_swh{position:fixed;top:50px;right:20px;padding:8px 16px;background-color:var(--scb-switch-bg);color:var(--scb-switch-text);border:1px solid var(--scb-border);border-radius:4px;cursor:pointer;z-index:1000;transition:background-color 0.2s ease;font-size:12px;}
+    .bar_swh:hover{background-color:var(--scb-hover-bg);}
+    .bar_sel{background-color:var(--scb-select-bg);color:var(--scb-select-text);border:1px solid var(--scb-border);border-radius:3px;padding:2px;margin:2px;width:120px;font-size:13px;}
+    .spn_sel{display:inline-block;margin:2px 4px;color:var(--scb-text);width:100%;line-height:250%;font-size:12px;}
+    .spn_inp{display:inline-block;margin:2px 4px;color:var(--scb-text);line-height:250%;font-size:12px;}
+    .spn_inp input[type="checkbox"]{margin-right:4px;vertical-align:middle;}
+    .reset-button{background-color:var(--scb-switch-bg);color:var(--scb-switch-text);border:1px solid var(--scb-border);border-radius:4px;padding:4px 8px;margin:4px;cursor:pointer;font-size:12px;}
+    .reset-button:hover{background-color:var(--scb-hover-bg);}
+  `,
 
   /** FavoritesManager スタイル */
   favorites: `
-  :root{--fm-bg:#fff;--fm-text:#333;--fm-header-bg:#4CAF50;--fm-header-text:#fff;--fm-border:#ddd;--fm-shadow:rgba(0,0,0,.15);--fm-hover:#f8f9fa;--fm-form-bg:#f8f9fa;--fm-input-border:#ddd;}
-  :root[data-theme="dark"]{--fm-bg:#1a1a1a;--fm-text:#e0e0e0;--fm-header-bg:#2e7d32;--fm-border:#444;--fm-shadow:rgba(0,0,0,.3);--fm-hover:#2a2a2a;--fm-form-bg:#2a2a2a;--fm-input-border:#444;}
-  .fm-container{position:fixed;top:60px;right:20px;width:470px;max-height:85vh;background:var(--fm-bg);border-radius:16px;box-shadow:0 8px 32px var(--fm-shadow);display:none;flex-direction:column;overflow-y:auto;font-family:"Segoe UI","Hiragino Sans",sans-serif;color:var(--fm-text);z-index:1100;}
-  .fm-header{background:var(--fm-header-bg);padding:4px 20px;display:flex;justify-content:space-between;align-items:center;}
-  .fm-close-button{background:none;border:none;font-size:14px;color:var(--fm-header-text);cursor:pointer;}
-  .fm-form-section{padding:4px;background:var(--fm-form-bg);border-bottom:1px solid var(--fm-border);}
-  .fm-jump-buttons{display:flex;gap:8px;justify-content:center;padding:8px;}
-  .fm-button{border:none;cursor:pointer;font-size:14px;border-radius:5px;padding:8px;font-weight:500;transition:all 0.2s ease;}
-  .fm-button:hover{transform:translateY(-1px);}
-  .fm-toggle-button{background:#4CAF50;color:white;position:fixed;top:70px;right:20px;z-index:900;padding:8px 16px;border-radius:5px;border:1px solid var(--ss-border-color,#ddd);transition:all 0.2s ease;}
-  .fm-button.primary{background:#4CAF50;color:white;}
-  .fm-button.secondary{background:#2196F3;color:white;}
-  .fm-button.watching{background:#FF9800;color:white;}
-  .fm-button.export{background:#2196F3;color:white;}
-  .fm-button.import{background:#FF9800;color:white;}
-  .fm-button.remove{background:#dc3545;color:white;border:none;padding:2px 5px;border-radius:3px;cursor:pointer;display:none;}
-  .fm-search,.fm-select,.fm-input,.fm-textarea{padding:4px 12px;border:1px solid var(--fm-input-border);border-radius:8px;font-size:14px;background:var(--fm-bg);color:var(--fm-text);box-sizing:border-box;}
-  .fm-search{width:100%;margin-bottom:10px;}
-  .fm-search.active{background:#fff3cd;}
-  :root[data-theme="dark"] .fm-search.active{background:#d4a017;}
-  .fm-select{margin-right:5px;}
-  .fm-input{width:calc(100% - 70px);}
-  .fm-textarea.memo{height:30px;width:100%;margin-top:5px;}
-  .fm-textarea.io{width:100%;height:100px;margin-top:10px;font-family:monospace;}
-  .fm-list{list-style:none;padding:0;margin:10px 0;max-height:350px;overflow-y:auto;}
-  .fm-category-header{padding:5px;background:var(--fm-form-bg);font-weight:bold;border-bottom:1px solid var(--fm-border);}
-  ul.fm-list li.fm-item{padding:5px;border-bottom:1px solid var(--fm-border);display:flex;justify-content:space-between;align-items:center;background:var(--fm-bg);}
-  ul.fm-list li.fm-item:hover{background:var(--fm-hover) !important;}
-  ul.fm-list li.fm-item:hover .fm-button.remove{display:block !important;}
-  .fm-item-title{flex-grow:1;margin-right:10px;}
-`,
+    :root{--fm-bg:#fff;--fm-text:#333;--fm-header-bg:#4CAF50;--fm-header-text:#fff;--fm-border:#ddd;--fm-shadow:rgba(0,0,0,.15);--fm-hover:#f8f9fa;--fm-form-bg:#f8f9fa;--fm-input-border:#ddd;}
+    :root[data-theme="dark"]{--fm-bg:#1a1a1a;--fm-text:#e0e0e0;--fm-header-bg:#2e7d32;--fm-border:#444;--fm-shadow:rgba(0,0,0,.3);--fm-hover:#2a2a2a;--fm-form-bg:#2a2a2a;--fm-input-border:#444;}
+    .fm-container{position:fixed;top:60px;right:20px;width:470px;max-height:85vh;background:var(--fm-bg);border-radius:16px;box-shadow:0 8px 32px var(--fm-shadow);display:none;flex-direction:column;overflow-y:auto;font-family:"Segoe UI","Hiragino Sans",sans-serif;color:var(--fm-text);z-index:1100;}
+    .fm-header{background:var(--fm-header-bg);padding:4px 20px;display:flex;justify-content:space-between;align-items:center;}
+    .fm-close-button{background:none;border:none;font-size:14px;color:var(--fm-header-text);cursor:pointer;}
+    .fm-form-section{padding:4px;background:var(--fm-form-bg);border-bottom:1px solid var(--fm-border);}
+    .fm-jump-buttons{display:flex;gap:8px;justify-content:center;padding:8px;}
+    .fm-button{border:none;cursor:pointer;font-size:14px;border-radius:5px;padding:8px;font-weight:500;transition:all 0.2s ease;}
+    .fm-button:hover{transform:translateY(-1px);}
+    .fm-toggle-button{background:#4CAF50;color:white;position:fixed;top:70px;right:20px;z-index:900;padding:8px 16px;border-radius:5px;border:1px solid var(--ss-border-color,#ddd);transition:all 0.2s ease;}
+    .fm-button.primary{background:#4CAF50;color:white;}
+    .fm-button.secondary{background:#2196F3;color:white;}
+    .fm-button.watching{background:#FF9800;color:white;}
+    .fm-button.export{background:#2196F3;color:white;}
+    .fm-button.import{background:#FF9800;color:white;}
+    .fm-button.remove{background:#dc3545;color:white;border:none;padding:2px 5px;border-radius:3px;cursor:pointer;display:none;}
+    .fm-search,.fm-select,.fm-input,.fm-textarea{padding:4px 12px;border:1px solid var(--fm-input-border);border-radius:8px;font-size:14px;background:var(--fm-bg);color:var(--fm-text);box-sizing:border-box;}
+    .fm-search{width:100%;margin-bottom:10px;}
+    .fm-search.active{background:#fff3cd;}
+    :root[data-theme="dark"] .fm-search.active{background:#d4a017;}
+    .fm-select{margin-right:5px;}
+    .fm-input{width:calc(100% - 70px);}
+    .fm-textarea.memo{height:30px;width:100%;margin-top:5px;}
+    .fm-textarea.io{width:100%;height:100px;margin-top:10px;font-family:monospace;}
+    .fm-list{list-style:none;padding:0;margin:10px 0;max-height:350px;overflow-y:auto;}
+    .fm-category-header{padding:5px;background:var(--fm-form-bg);font-weight:bold;border-bottom:1px solid var(--fm-border);}
+    ul.fm-list li.fm-item{padding:5px;border-bottom:1px solid var(--fm-border);display:flex;justify-content:space-between;align-items:center;background:var(--fm-bg);}
+    ul.fm-list li.fm-item:hover{background:var(--fm-hover) !important;}
+    ul.fm-list li.fm-item:hover .fm-button.remove{display:block !important;}
+    .fm-item-title{flex-grow:1;margin-right:10px;}
+  `,
 
   /** SettingsEditor スタイル */
   settings: `
-  :root{--se-bg:var(--ss-body-bg,#fff);--se-text:var(--ss-text-color,#333);--se-header-bg:#4CAF50;--se-border:var(--ss-border-color,#ddd);--se-shadow:rgba(0,0,0,.15);--se-hover:var(--ss-hover-bg,#f8f9fa);}
-  :root[data-theme="dark"]{--se-bg:var(--ss-body-bg,#1a1a1a);--se-text:var(--ss-text-color,#e0e0e0);--se-header-bg:#2e7d32;--se-border:var(--ss-border-color,#444);--se-shadow:rgba(0,0,0,.3);--se-hover:var(--ss-hover-bg,#2a2a2a);}
-  .se-container{position:fixed;top:60px;left:20px;width:470px;max-height:80vh;background:var(--se-bg);border-radius:16px;box-shadow:0 8px 32px var(--se-shadow);display:flex;flex-direction:column;z-index:1100;overflow-y:auto;}
-  .se-fixed-header{position:sticky;top:0;background:var(--se-header-bg);color:#fff;z-index:1;padding:8px 20px;height:25px;}
-  .se-header{display:flex;justify-content:space-between;align-items:center;}
-  .se-title{margin:0;font-size:16px;font-weight:500;}
-  .se-close-button{background:none;border:none;font-size:16px;color:#fff;cursor:pointer;padding:0 8px;}
-  .se-buttons-container{position:sticky;top:40px;background:var(--se-bg);z-index:1;padding:4px 0;border-bottom:1px solid var(--se-border);}
-  .se-form-section.buttons{display:flex;flex-direction:row;gap:16px;justify-content:center;padding:4px 0;}
-  .se-form-section{padding:8px 12px;display:flex;flex-direction:column;gap:6px;}
-  .se-lists-container{flex:1;overflow-y:auto;padding:8px;background:var(--se-bg);}
-  .se-category{margin-bottom:12px;border-radius:8px;background:var(--se-bg);box-shadow:0 2px 4px var(--se-shadow);}
-  .se-category-header{padding:8px 12px;border-bottom:1px solid var(--se-border);background:var(--se-bg);cursor:pointer;}
-  .se-category-title{font-size:16px;margin:0;color:var(--se-text);}
-  .se-form-grid{display:flex;justify-content:space-between;align-items:center;gap:12px;}
-  .se-form-grid label{flex:1;text-align:left;color:var(--se-text);font-size:14px;cursor:help;}
-  .se-form-grid input[type="checkbox"],.se-form-grid input[type="text"],.se-form-grid input[type="password"],.se-form-grid input[type="number"]{width:auto;padding:4px;border:1px solid var(--se-border);border-radius:4px;background:var(--se-bg);color:var(--se-text);}
-  .se-form-grid input[type="checkbox"]{margin-left:8px;}
-  .se-button{border:none;cursor:pointer;font-size:14px;border-radius:5px;padding:6px 12px;font-weight:500;transition:all 0.2s ease;min-width:80px;}
-  .se-button:hover{transform:translateY(-1px);}
-  .se-button-primary{background:#27ae60;color:white;}
-  .se-button-danger{background:#dc3545;color:white;}
-  .se-form-section h4{margin:8px 0 4px;font-size:14px;color:var(--se-text);}
-  .se-settings-button{position:fixed;top:10px;left:20px;background:none;border:1px solid var(--se-border);font-size:16px;color:var(--se-text);cursor:pointer;padding:8px;border-radius:5px;z-index:1200;transition:all 0.2s ease;}
-  .se-settings-button:hover{background-color:var(--se-hover);transform:translateY(-1px);}
-`,
+    :root{--se-bg:var(--ss-body-bg,#fff);--se-text:var(--ss-text-color,#333);--se-header-bg:#4CAF50;--se-border:var(--ss-border-color,#ddd);--se-shadow:rgba(0,0,0,.15);--se-hover:var(--ss-hover-bg,#f8f9fa);}
+    :root[data-theme="dark"]{--se-bg:var(--ss-body-bg,#1a1a1a);--se-text:var(--ss-text-color,#e0e0e0);--se-header-bg:#2e7d32;--se-border:var(--ss-border-color,#444);--se-shadow:rgba(0,0,0,.3);--se-hover:var(--ss-hover-bg,#2a2a2a);}
+    .se-container{position:fixed;top:60px;left:20px;width:470px;max-height:80vh;background:var(--se-bg);border-radius:16px;box-shadow:0 8px 32px var(--se-shadow);display:flex;flex-direction:column;z-index:1100;overflow-y:auto;}
+    .se-fixed-header{position:sticky;top:0;background:var(--se-header-bg);color:#fff;z-index:1;padding:8px 20px;height:25px;}
+    .se-header{display:flex;justify-content:space-between;align-items:center;}
+    .se-title{margin:0;font-size:16px;font-weight:500;}
+    .se-close-button{background:none;border:none;font-size:16px;color:#fff;cursor:pointer;padding:0 8px;}
+    .se-buttons-container{position:sticky;top:40px;background:var(--se-bg);z-index:1;padding:4px 0;border-bottom:1px solid var(--se-border);}
+    .se-form-section.buttons{display:flex;flex-direction:row;gap:16px;justify-content:center;padding:4px 0;}
+    .se-form-section{padding:8px 12px;display:flex;flex-direction:column;gap:6px;}
+    .se-lists-container{flex:1;overflow-y:auto;padding:8px;background:var(--se-bg);}
+    .se-category{margin-bottom:12px;border-radius:8px;background:var(--se-bg);box-shadow:0 2px 4px var(--se-shadow);}
+    .se-category-header{padding:8px 12px;border-bottom:1px solid var(--se-border);background:var(--se-bg);cursor:pointer;}
+    .se-category-title{font-size:16px;margin:0;color:var(--se-text);}
+    .se-form-grid{display:flex;justify-content:space-between;align-items:center;gap:12px;}
+    .se-form-grid label{flex:1;text-align:left;color:var(--se-text);font-size:14px;cursor:help;}
+    .se-form-grid input[type="checkbox"],.se-form-grid input[type="text"],.se-form-grid input[type="password"],.se-form-grid input[type="number"]{width:auto;padding:4px;border:1px solid var(--se-border);border-radius:4px;background:var(--se-bg);color:var(--se-text);}
+    .se-form-grid input[type="checkbox"]{margin-left:8px;}
+    .se-button{border:none;cursor:pointer;font-size:14px;border-radius:5px;padding:6px 12px;font-weight:500;transition:all 0.2s ease;min-width:80px;}
+    .se-button:hover{transform:translateY(-1px);}
+    .se-button-primary{background:#27ae60;color:white;}
+    .se-button-danger{background:#dc3545;color:white;}
+    .se-form-section h4{margin:8px 0 4px;font-size:14px;color:var(--se-text);}
+    .se-settings-button{position:fixed;top:10px;left:20px;background:none;border:1px solid var(--se-border);font-size:16px;color:var(--se-text);cursor:pointer;padding:8px;border-radius:5px;z-index:1200;transition:all 0.2s ease;}
+    .se-settings-button:hover{background-color:var(--se-hover);transform:translateY(-1px);}
+  `,
 };
 
 /* ==================================================
@@ -1245,7 +1240,6 @@ class ThemeManager {
   #current;
   #button = null;
 
-  /** テーマ遷移マップ */
   static #STATES = Object.freeze({
     light: { next: 'dark',  icon: '🌙' },
     dark:  { next: 'light', icon: '☀️' },
@@ -1327,7 +1321,6 @@ class ThemeManager {
  *   *（未設定）  → メイン/捜索掲示板はすべてここ
  * -------------------------------------------------- */
 class RouteManager {
-  /** pathname → ページ種別 マップ */
   static #PATH_MAP = Object.freeze({
     '/bbs/sst/sst.php':       'ssList',
     '/bbs/sss/sss.php':       'search',
@@ -1640,7 +1633,6 @@ class ArticleGapHandler {
  *   - ページネーション DOM 生成
  * -------------------------------------------------- */
 class CommentRenderer {
-  /** 日付変換マップ */
   static #DATE_MAP = Object.freeze({
     days: {
       Mon: '月', Tue: '火', Wed: '水', Thu: '木',
@@ -2075,7 +2067,6 @@ class IndexPopupHandler {
   }
 }
 
-
 /* ==================================================
  * RENDERERS
  * ================================================== */
@@ -2108,14 +2099,35 @@ class LinkOptimizer {
     );
     links.forEach(link => {
       let href = link.getAttribute('href') || '';
-      let text = link.textContent || '';
       for (const rule of this.#activeRules) {
-        if (!rule.pattern.test(rule.target === 'text' ? text : href)) continue;
-        if (rule.target === 'href') { href = href.replace(rule.pattern, rule.replacement); link.setAttribute('href', href); }
-        else if (rule.target === 'text') { text = text.replace(rule.pattern, rule.replacement); link.textContent = text; }
-        else if (rule.target === 'attr') { link.setAttribute(rule.attrName, rule.attrValue); }
+        if (rule.target === 'href') {
+          if (rule.pattern.test(href)) {
+            href = href.replace(rule.pattern, rule.replacement);
+            link.setAttribute('href', href);
+          }
+        } else if (rule.target === 'text') {
+          // 修正：textContent 直接代入によるDOM破壊を防止するヘルパーを呼ぶ
+          this.#replaceTextNodes(link, rule.pattern, rule.replacement);
+        } else if (rule.target === 'attr') {
+          if (rule.pattern.test(href)) {
+            link.setAttribute(rule.attrName, rule.attrValue);
+          }
+        }
       }
     });
+  }
+
+  // 修正：追加された安全なテキストノード専用置換ヘルパー
+  #replaceTextNodes(node, pattern, replacement) {
+    if (node.nodeType === 3) { // Text Node
+      if (pattern.test(node.nodeValue)) {
+        node.nodeValue = node.nodeValue.replace(pattern, replacement);
+      }
+    } else {
+      for (const child of Array.from(node.childNodes)) {
+        this.#replaceTextNodes(child, pattern, replacement);
+      }
+    }
   }
 }
 
@@ -2160,8 +2172,8 @@ class ListRenderer {
         const nodes = Array.from(bLast.childNodes);
         bLast.replaceChildren(this.#createLink('all_msg', articleId, nodes));
       }
-      // 感想セルの重複追加を防ぐ（クラスで判定）
-      if (!row.querySelector('.impression-cell')) {
+      // 修正：DOMCache を活用し不要なDOMクエリを排除
+      if (!this.#domCache.query(row, '.impression-cell')) {
         const tdImp = el('td', { align: 'center', class: 'impression-cell' });
         tdImp.appendChild(this.#createLink('impression', articleId, '？', '&page=1'));
         row.insertBefore(tdImp, row.lastElementChild);
@@ -2211,7 +2223,8 @@ class ListRenderer {
   }
 
   appendImpressionHeader(table) {
-    const firstRow = table.querySelector('tr:not(.impression-added)');
+    // 修正：DOMCache を活用してテーブル内の先頭行を取得
+    const firstRow = this.#domCache.query(table, 'tr:not(.impression-added)');
     if (!firstRow) return;
     const tdImp = el('td', { nowrap: '' });
     tdImp.setAttribute('align', 'center');
@@ -2327,11 +2340,12 @@ class ListFormatter {
   constructor(config, pageType, parser, favMatcher, ngMatcher) {
     this.#config     = config;
     this.#pageType   = pageType;
-    this.#parser     = parser;
+    this.#domCache   = new DOMCache();
+    // 修正：Parserに同一の DOMCache を注入し、キャッシュ機能を集約
+    this.#parser     = new ArcadiaDOMParser(this.#domCache);
     this.#favMatcher = favMatcher;
     this.#ngMatcher  = ngMatcher;
-    this.#domCache   = new DOMCache();
-    this.#rebuilder  = new TableRebuilder(parser);
+    this.#rebuilder  = new TableRebuilder(this.#parser);
     this.#renderer   = new ListRenderer(config, this.#domCache);
     this.#optimizer  = new LinkOptimizer(config.ssList);
     this.#pageInfo   = this.#detectPageInfo();
@@ -2427,6 +2441,7 @@ class StyleControlBar {
   #currentTheme;
   #defaults;
   #observer;
+  #originalHTML = null; // 修正：退避用プロパティを新設
 
   static #STYLE_MAP = Object.freeze({
     width:           { prop: 'width',           selector: 'table.brdr' },
@@ -2441,33 +2456,24 @@ class StyleControlBar {
     spacing: {
       applyPattern:  /(<br>)+　*<br>　*<br>/ig,
       applyReplace:  '<xxx></xxx><br><br>',
-      removePattern: /<xxx><\/xxx>/ig,
-      removeReplace: '<br>',
     },
     indent: {
       applyPattern:  /<br> *([^　 ＜【「『《≪（\(\｢<※])/ig,
       applyReplace:  '<br>　<zzz></zzz>$1',
-      removePattern: /　<zzz><\/zzz>/ig,
-      removeReplace: '',
     },
     linebreak: {
       applyPattern:  /([^。\.\, 」"'》』\)）】≫＞>｣…―・！？\!\?])<br>/ig,
       applyReplace:  '$1<yyy></yyy>',
-      removePattern: /<yyy><\/yyy>/ig,
-      removeReplace: '<br>',
     },
     wordWrap: {
       applyPattern:  /(.)(\1{6})/ig,
       applyReplace:  '$1$2<wbr>',
-      removePattern: /<wbr>/ig,
-      removeReplace: '',
     },
     insertspace: {
       applyPatterns: [
         { pattern: /([^」』）》≫\)｣＞】>])<br>([＜【「『《≪（\(｢])/ig, replacement: '$1<ooo><br></ooo><br>$2' },
         { pattern: /([」』）》≫\)｣＞】])<br>([^＜【「『《≪（\(｢<])/ig,  replacement: '$1<ooo><br></ooo><br>$2' },
       ],
-      removePatterns: [{ pattern: /<ooo><br><\/ooo>/ig, replacement: '' }],
     },
   });
 
@@ -2499,21 +2505,33 @@ class StyleControlBar {
     });
   }
 
-  #applyFormat(key, enabled) {
-    const rule    = StyleControlBar.#FORMAT_RULES[key];
+  // 修正：退避したHTMLデータを使い、オンになっている設定のみを一方向かつ安全に再適用
+  #applyFormats() {
     const content = document.querySelector('blockquote');
-    if (!rule || !content) return;
-    let html = content.innerHTML;
-    const before = html;
-    if (key === 'insertspace') {
-      const pats = enabled ? rule.applyPatterns : rule.removePatterns;
-      html = pats.reduce((acc, { pattern, replacement }) => acc.replace(pattern, replacement), html);
-    } else {
-      html = enabled
-        ? html.replace(rule.applyPattern, rule.applyReplace)
-        : html.replace(rule.removePattern, rule.removeReplace);
+    if (!content || this.#originalHTML === null) return;
+
+    const bar = document.getElementById('style-control-bar');
+    if (!bar) return;
+
+    let html = this.#originalHTML;
+
+    for (const [key, rule] of Object.entries(StyleControlBar.#FORMAT_RULES)) {
+      const cb = bar.querySelector(`#format-${key}`);
+      const saved = StorageManager.getStyleBarSettings();
+      const enabled = cb ? cb.checked : (saved ? !!saved.formats?.[key] : !!this.#config.autoExecute[key]);
+
+      if (enabled) {
+        if (key === 'insertspace') {
+          html = rule.applyPatterns.reduce((acc, { pattern, replacement }) => acc.replace(pattern, replacement), html);
+        } else {
+          html = html.replace(rule.applyPattern, rule.applyReplace);
+        }
+      }
     }
-    if (html !== before) content.innerHTML = html;
+
+    if (content.innerHTML !== html) {
+      content.innerHTML = html;
+    }
   }
 
   #saveSettings() {
@@ -2545,8 +2563,9 @@ class StyleControlBar {
     });
     Object.entries(saved.formats || {}).forEach(([key, val]) => {
       const cb = bar.querySelector(`#format-${key}`);
-      if (cb) { cb.checked = val; this.#applyFormat(key, val); }
+      if (cb) cb.checked = val;
     });
+    this.#applyFormats();
     return true;
   }
 
@@ -2647,7 +2666,7 @@ class StyleControlBar {
         const key = t.id.replace('style-', '');
         this.#applyStyle(key, t.value === 'standard' ? this.#defaults[key] : t.value);
       } else if (t.matches('input[type="checkbox"]')) {
-        this.#applyFormat(t.id.replace('format-', ''), t.checked);
+        this.#applyFormats();
       }
       this.#saveSettings();
     });
@@ -2662,8 +2681,8 @@ class StyleControlBar {
       bar.querySelectorAll('input[type="checkbox"]').forEach(cb => {
         const key = cb.id.replace('format-', '');
         cb.checked = !!this.#config.autoExecute[key];
-        this.#applyFormat(key, cb.checked);
       });
+      this.#applyFormats();
       StorageManager.removeStyleBarSettings();
     });
     swh.addEventListener('click', () => {
@@ -2689,6 +2708,13 @@ class StyleControlBar {
 
   init() {
     if (this.#isInitialized || !this.#config.viewer?.styleBar) return;
+
+    // 修正：初期化段階でプレーンなオリジナルのHTMLを完全退避
+    const content = document.querySelector('blockquote');
+    if (content) {
+      this.#originalHTML = content.innerHTML;
+    }
+
     ensureStyleElement('atb-style-bar', CSS_DEFS.styleBar);
     requestAnimationFrame(() => {
       const swh = el('div', { class: 'bar_swh', text: '開く' });
@@ -2698,7 +2724,7 @@ class StyleControlBar {
       this.#setupEvents(bar, swh);
       const loaded = this.#loadSettings();
       if (!loaded) {
-        Object.entries(this.#config.autoExecute).forEach(([key, on]) => { if (on) this.#applyFormat(key, true); });
+        this.#applyFormats();
         Object.entries(this.#defaults).forEach(([key, val]) => this.#applyStyle(key, val));
       }
       this.#isInitialized = true;
@@ -2712,7 +2738,7 @@ class StyleControlBar {
  * SpamFilter  /  FormFiller
  * -------------------------------------------------- */
 class SpamFilter {
-  static #LONG_ALPHA = /[A-Za-z]{10,}/;
+  static #LONG_ALPHA = /[A-Za-z]{15,}/; // 修正：英字連続の文字条件をより厳しく
   static #URL_ISH    = /(https?:\/\/|www\.)/i;
   #config;
   constructor(config) { this.#config = config; }
@@ -2726,7 +2752,11 @@ class SpamFilter {
       if (!text) return;
       const alphaCount = (text.match(/[A-Za-z]/g) || []).length;
       const ratio = alphaCount / Math.max(text.length, 1);
-      const isSpam = SpamFilter.#LONG_ALPHA.test(text) && (SpamFilter.#URL_ISH.test(text) || ratio > 0.7);
+
+      // 修正：URL有無を必須要件に加味し、二次創作の英語タイトル誤爆を防ぐ
+      const isSpam = (SpamFilter.#URL_ISH.test(text) && ratio > 0.5) ||
+                     (SpamFilter.#LONG_ALPHA.test(text) && ratio > 0.85);
+
       if (isSpam) updates.push(() => { row.style.display = 'none'; });
     });
     if (updates.length) requestAnimationFrame(() => updates.forEach(fn => fn()));
@@ -3297,7 +3327,6 @@ class SettingsEditor {
   }
 }
 
-
 /* ==================================================
  * INITIALIZE
  * ================================================== */
@@ -3310,7 +3339,6 @@ function boot(ctx) {
   const { pageType, act } = RouteManager.detect();
   if (!pageType) return;
 
-  // 全ページ共通：テーマ
   themeManager.init();
 
   // ---- ssList (/bbs/sst/sst.php) ----
@@ -3352,7 +3380,8 @@ function main() {
 
   const configManager = new ConfigManager(CONFIG);
   const config        = configManager.load();
-  const parser        = new ArcadiaDOMParser();
+  const domCache      = new DOMCache(); // 修正：共通のDOMCacheを生成してParserに注入
+  const parser        = new ArcadiaDOMParser(domCache);
   const favMatcher    = new FavoriteMatcher();
   const ngMatcher     = new NGMatcher();
   const themeManager  = new ThemeManager();
@@ -3366,7 +3395,6 @@ function main() {
     favMatcher.load(updated);
     ngMatcher.load(updated.blocked);
   });
-
 
   boot({ config, parser, favMatcher, ngMatcher, themeManager, configManager });
 
