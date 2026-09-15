@@ -98,7 +98,6 @@ const CONFIG = deepFreeze({
     embedPageLinks: true,
     sortDesc: true,
     japaneseDate: true,
-    adjustStyle: false,
     searchBar: true,
     hideSpam: true,
   },
@@ -1709,7 +1708,6 @@ class CommentRenderer {
     if (!totalComments) return null;
 
     const totalPages = Math.ceil(totalComments / 20);
-    const startPage  = currentPage + totalPages - 1;
 
     const table   = el('table', { class: 'ss-pagination-table' });
     const row     = table.insertRow();
@@ -1717,14 +1715,11 @@ class CommentRenderer {
     const tdLinks = el('td', { class: 'ss-pagination-links' });
     const tdNew   = el('td', { class: 'ss-pagination-latest', text: '→最新' });
 
-    for (let i = 0; i < startPage; i++) {
-      const page         = startPage - i;
-      const startComment = Math.max(
-        totalComments - 20 * (page - (currentPage - 1)) + 1, 1
-      );
+    for (let page = totalPages; page >= 1; page--) {
+      const startComment = Math.max(totalComments - 20 * page + 1, 1);
       const label = `[${String(startComment).padStart(4, '0')}-]`;
 
-      if (i !== 0) tdLinks.appendChild(safeText('  '));
+      if (page !== totalPages) tdLinks.appendChild(safeText('  '));
 
       if (page === currentPage) {
         tdLinks.appendChild(safeText(label));
@@ -2548,14 +2543,17 @@ class StyleControlBar {
 
   #loadSettings() {
     const saved = StorageManager.getStyleBarSettings();
-    if (!saved) return false;
+    if (!saved || typeof saved !== 'object') return false;
+
+    const styles = saved.styles && typeof saved.styles === 'object' ? { ...saved.styles } : {};
+    const formats = saved.formats && typeof saved.formats === 'object' ? saved.formats : {};
     if (saved.theme !== this.#currentTheme) {
-      saved.styles.color = 'standard';
-      saved.styles.backgroundColor = 'standard';
+      styles.color = 'standard';
+      styles.backgroundColor = 'standard';
     }
     const bar = document.getElementById('style-control-bar');
     if (!bar) return false;
-    Object.entries(saved.styles || {}).forEach(([key, val]) => {
+    Object.entries(styles).forEach(([key, val]) => {
       const sel = bar.querySelector(`#style-${key}`);
       if (!sel) return;
       if (Array.from(sel.options).some(o => o.value === val)) {
@@ -2564,7 +2562,7 @@ class StyleControlBar {
         sel.options[0].textContent = `[標準: ${this.#defaults[key]}]`;
       }
     });
-    Object.entries(saved.formats || {}).forEach(([key, val]) => {
+    Object.entries(formats).forEach(([key, val]) => {
       const cb = bar.querySelector(`#format-${key}`);
       if (cb) cb.checked = val;
     });
@@ -2768,6 +2766,7 @@ class SpamFilter {
 
 class FormFiller {
   static #INPUT_MAP = Object.freeze({ name: ['name','iname'], tripcode: ['trip','itrip'], password: ['password','ipass'] });
+  static #POST_ACTIONS = new Set(['post', 'write_impression']);
   #config;
   constructor(config) { this.#config = config; }
   run() {
@@ -2775,16 +2774,21 @@ class FormFiller {
     const userInfo = this.#config?.posting?.userInfo;
     if (!userInfo) return;
     const updates = [];
-    document.querySelectorAll('input').forEach(input => {
-      const name = input.name;
-      if (!name) return;
-      for (const [key, names] of Object.entries(FormFiller.#INPUT_MAP)) {
-        if (!names.includes(name)) continue;
-        const v = userInfo[key];
-        if (v == null) break;
-        updates.push(() => { input.defaultValue = v; if (!input.value) input.value = v; });
-        break;
-      }
+    document.querySelectorAll('form').forEach(form => {
+      const action = form.querySelector('input[name="act"]')?.value;
+      if (!FormFiller.#POST_ACTIONS.has(action)) return;
+
+      form.querySelectorAll('input').forEach(input => {
+        const name = input.name;
+        if (!name) return;
+        for (const [key, names] of Object.entries(FormFiller.#INPUT_MAP)) {
+          if (!names.includes(name)) continue;
+          const v = userInfo[key];
+          if (v == null) break;
+          updates.push(() => { input.defaultValue = v; if (!input.value) input.value = v; });
+          break;
+        }
+      });
     });
     if (updates.length) requestAnimationFrame(() => updates.forEach(fn => fn()));
   }
@@ -3108,7 +3112,6 @@ class ConfigManager {
           { id: 'embedPageLinks', label: '感想ページにリンク埋め込み', type: 'checkbox', value: true },
           { id: 'sortDesc',       label: '感想順を降順に',             type: 'checkbox', value: true },
           { id: 'japaneseDate',   label: '日本語日付表示',             type: 'checkbox', value: true },
-          { id: 'adjustStyle',    label: '行高・文字色修正',           type: 'checkbox', value: false },
           { id: 'searchBar',      label: '検索バー埋め込み',           type: 'checkbox', value: true },
           { id: 'hideSpam',       label: 'スパム非表示',               type: 'checkbox', value: true },
         ],
