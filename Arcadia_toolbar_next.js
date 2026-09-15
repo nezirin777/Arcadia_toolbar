@@ -670,10 +670,13 @@ class ArcadiaDOMParser {
    * @property {string} title  タイトル文字列
    */
   parseMainRow(row) {
-    const tdSecond = row.cells?.[1];
-    if (!tdSecond) return null;
-    const anchor = this.#query(tdSecond, 'a');
-    const title  = anchor?.textContent?.trim() || tdSecond.textContent?.trim() || '';
+    // メイン／捜索掲示板は「カテゴリ・番号・タイトル」の列順。
+    // 列番号に依存せず、記事を特定する all= リンクからタイトルを取る。
+    const anchor = this.#query(
+      row,
+      'a[href*="?all="], a[href*="&all="], a[href*="?amp;all="], a[href*="&amp;all="]',
+    );
+    const title = anchor?.textContent?.trim() || '';
     if (!title) return null;
     return { title };
   }
