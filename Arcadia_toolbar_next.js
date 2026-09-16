@@ -3298,6 +3298,7 @@ class ConfigManager {
           { id: 'directLinks',       label: '全話・感想直リンク',      type: 'checkbox', value: true },
           { id: 'hideAdsShort',      label: '広告・短編非表示',        type: 'checkbox', value: false },
           { id: 'adsThreshold',      label: '広告閾値',                type: 'number',   value: 1 },
+          { id: 'adjustLineHeight',  label: '一覧の行間調整',          type: 'checkbox', value: true },
           { id: 'showPvRatio',       label: 'PV÷記事数表示',          type: 'checkbox', value: false },
           { id: 'hideLowPv',         label: '低PV率非表示',            type: 'checkbox', value: false },
           { id: 'pvThreshold',       label: 'PV閾値',                  type: 'number',   value: 500 },
@@ -3333,6 +3334,7 @@ class ConfigManager {
           { id: 'width',      label: '幅',        type: 'text', value: '90%' },
           { id: 'lineHeight', label: '行間',       type: 'text', value: '150%' },
           { id: 'fontSize',   label: '文字サイズ', type: 'text', value: '100%' },
+          { id: 'fontFamily', label: 'フォント',   type: 'text', value: '' },
         ],
         themes: {
           light: [

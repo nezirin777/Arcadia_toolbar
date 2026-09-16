@@ -604,6 +604,23 @@ const TESTS = [
         doc.querySelector('#theme-toggle-button')?.textContent === '☀️';
     },
   },
+  {
+    id: 'T-43', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '設定画面から一覧行間調整と標準フォントを編集',
+    check(doc, win) {
+      doc.querySelector('.se-settings-button')?.click();
+      const adjustLineHeight = doc.querySelector('#ssList-adjustLineHeight');
+      const fontFamily = doc.querySelector('#style-fontFamily');
+      if (!adjustLineHeight || !fontFamily) return false;
+      adjustLineHeight.checked = false;
+      adjustLineHeight.dispatchEvent(new win.Event('input', { bubbles: true }));
+      fontFamily.value = 'sans-serif';
+      fontFamily.dispatchEvent(new win.Event('input', { bubbles: true }));
+      doc.querySelector('[data-action="save"]')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_config') || '{}');
+      return saved.ssList?.adjustLineHeight === false && saved.style?.fontFamily === 'sans-serif';
+    },
+  },
 ];
 
 function saveStorage() {
