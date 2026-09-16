@@ -621,6 +621,19 @@ const TESTS = [
       return saved.ssList?.adjustLineHeight === false && saved.style?.fontFamily === 'sans-serif';
     },
   },
+  {
+    id: 'T-44', fixture: 'ss-article-first.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10001&n=0&count=1',
+    label: '目次ポップアップの開閉状態をaria-expandedへ反映',
+    check(doc) {
+      const button = doc.querySelector('#seaiz');
+      const panel = doc.querySelector('#tableind');
+      if (!button || !panel || button.getAttribute('aria-expanded') !== 'false') return false;
+      button.click();
+      const opened = button.getAttribute('aria-expanded') === 'true' && panel.style.display === 'block';
+      button.click();
+      return opened && button.getAttribute('aria-expanded') === 'false';
+    },
+  },
 ];
 
 function saveStorage() {

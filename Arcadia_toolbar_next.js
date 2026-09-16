@@ -1912,6 +1912,7 @@ class CommentPageFormatter {
  * -------------------------------------------------- */
 class IndexPopupHandler {
   #isInitialized = false;
+  #button = null;
   #panel = null;
   #isVisible = false;
   #hideTimer = null;
@@ -2012,7 +2013,9 @@ class IndexPopupHandler {
 
   #show() {
     clearTimeout(this.#hideTimer);
-    if (!this.#panel || this.#isVisible) return;
+    if (!this.#panel) return;
+    this.#button?.setAttribute('aria-expanded', 'true');
+    if (this.#isVisible) return;
     this.#panel.style.display = 'block';
     requestAnimationFrame(() => {
       this.#panel.style.opacity   = '1';
@@ -2023,6 +2026,8 @@ class IndexPopupHandler {
 
   #hide() {
     if (!this.#panel || !this.#isVisible) return;
+    clearTimeout(this.#hideTimer);
+    this.#button?.setAttribute('aria-expanded', 'false');
     this.#hideTimer = setTimeout(() => {
       this.#panel.style.opacity   = '0';
       this.#panel.style.transform = 'translateY(-10px)';
@@ -2100,6 +2105,7 @@ class IndexPopupHandler {
       ensureStyleElement('atb-index-popup', CSS_DEFS.indexPopupBase);
 
       const button = this.#buildButton();
+      this.#button = button;
       this.#panel  = this.#buildPanel(indexRows);
 
       // ボタンイベント
