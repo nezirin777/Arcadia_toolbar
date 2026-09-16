@@ -378,16 +378,20 @@ const StorageManager = (() => {
     const result = {};
     for (const cat of CATEGORIES) {
       const items = Array.isArray(stored[cat]) ? stored[cat] : (defaultFavorites[cat] || []);
-      const validItems = items.filter(item =>
-        cat === 'blocked'
-          ? typeof item === 'string'
-          : item && typeof item === 'object' && item.title
-      );
       if (cat === 'blocked') {
-        result[cat] = [...new Set(validItems)];
+        result[cat] = [...new Set(items
+          .filter(item => typeof item === 'string')
+          .map(item => item.trim())
+          .filter(Boolean))];
       } else {
         const byTitle = new Map();
-        for (const item of validItems) byTitle.set(item.title, item);
+        for (const item of items) {
+          if (!item || typeof item !== 'object' || typeof item.title !== 'string') continue;
+          const title = item.title.trim();
+          if (!title) continue;
+          const memo = typeof item.memo === 'string' ? item.memo.trim() : '';
+          byTitle.set(title, { title, memo });
+        }
         result[cat] = [...byTitle.values()];
       }
     }
