@@ -65,6 +65,15 @@ function verify(checks) {
   return { passed: failed.length === 0, detail: failed.length ? `失敗: ${failed.join(', ')}` : '' };
 }
 
+function applyFormats(doc, enabled = []) {
+  const enabledSet = new Set(enabled);
+  const inputs = Array.from(doc.querySelectorAll('#style-control-bar input[id^="format-"]'));
+  for (const input of inputs) {
+    input.checked = enabledSet.has(input.id.replace('format-', ''));
+  }
+  inputs[0]?.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
 const TESTS = [
   {
     id: 'T-01', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
@@ -232,6 +241,77 @@ const TESTS = [
       await new Promise(resolve => win.setTimeout(resolve, 20));
       return written.includes('# お気に入り一覧') &&
         doc.querySelector('#favorites-copy-status')?.textContent.includes('コピーしました');
+    },
+  },
+  {
+    id: 'T-18', fixture: 'ss-article-formatting.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10002&n=0&count=1',
+    label: '体裁整形「空行」が3連続以上の改行を2つへ圧縮',
+    check(doc) {
+      applyFormats(doc, ['spacing']);
+      return doc.querySelectorAll('#spacing-case br').length === 2;
+    },
+  },
+  {
+    id: 'T-19', fixture: 'ss-article-formatting.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10002&n=0&count=1',
+    label: '体裁整形「行頭」が通常段落の先頭を全角空白で字下げ',
+    check(doc) {
+      applyFormats(doc, ['indent']);
+      return doc.querySelector('#indent-case br')?.nextSibling?.data?.startsWith('　');
+    },
+  },
+  {
+    id: 'T-20', fixture: 'ss-article-formatting.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10002&n=0&count=1',
+    label: '体裁整形「改行」が文中の不要な改行を除去',
+    check(doc) {
+      applyFormats(doc, ['linebreak']);
+      const target = doc.querySelector('#linebreak-case');
+      return target?.querySelectorAll('br').length === 0 && target.textContent === '途中改行継続';
+    },
+  },
+  {
+    id: 'T-21', fixture: 'ss-article-formatting.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10002&n=0&count=1',
+    label: '体裁整形「連字」が7文字の連続箇所へwbrを挿入',
+    check(doc) {
+      applyFormats(doc, ['wordWrap']);
+      const target = doc.querySelector('#wordwrap-case');
+      return target?.querySelectorAll('wbr').length === 1 && target.textContent === 'あああああああ';
+    },
+  },
+  {
+    id: 'T-22', fixture: 'ss-article-formatting.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10002&n=0&count=1',
+    label: '体裁整形「挿行」が地の文と会話の境界へ空行を挿入',
+    check(doc) {
+      applyFormats(doc, ['insertspace']);
+      return doc.querySelectorAll('#insertspace-case br').length === 4;
+    },
+  },
+  {
+    id: 'T-23', fixture: 'ss-article-formatting.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10002&n=0&count=1',
+    label: '体裁整形を全解除すると初期DOMへ完全復元',
+    check(doc) {
+      applyFormats(doc);
+      const content = doc.querySelector('blockquote');
+      const original = content?.cloneNode(true);
+      applyFormats(doc, ['spacing', 'indent', 'linebreak', 'wordWrap', 'insertspace']);
+      applyFormats(doc);
+      return !!content && !!original && content.isEqualNode(original);
+    },
+  },
+  {
+    id: 'T-24', fixture: 'ss-article-formatting.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10002&n=0&count=1',
+    label: '空行圧縮後の2改行を「改行」整形との併用時も維持',
+    check(doc) {
+      applyFormats(doc, ['spacing', 'linebreak']);
+      return doc.querySelectorAll('#spacing-case br').length === 2;
+    },
+  },
+  {
+    id: 'T-25', fixture: 'ss-article-formatting.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10002&n=0&count=1',
+    label: '連字整形が属性値や既存の装飾要素を変更しない',
+    check(doc) {
+      applyFormats(doc, ['wordWrap']);
+      const target = doc.querySelector('#markup-case');
+      return target?.dataset.repeat === 'aaaaaaa' && target.querySelector('em')?.textContent === '装飾要素';
     },
   },
 ];

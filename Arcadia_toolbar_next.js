@@ -2461,7 +2461,7 @@ class StyleControlBar {
   #currentTheme;
   #defaults;
   #observer;
-  #originalHTML = null; // 修正：退避用プロパティを新設
+  #originalContent = null;
 
   static #STYLE_MAP = Object.freeze({
     width:           { prop: 'width',           selector: 'table.brdr' },
@@ -2472,30 +2472,8 @@ class StyleControlBar {
     backgroundColor: { prop: 'background-color', selector: '.brdr td.bgc' },
   });
 
-  static #FORMAT_RULES = Object.freeze({
-    spacing: {
-      applyPattern:  /(<br>)+　*<br>　*<br>/ig,
-      applyReplace:  '<xxx></xxx><br><br>',
-    },
-    indent: {
-      applyPattern:  /<br> *([^　 ＜【「『《≪（\(\｢<※])/ig,
-      applyReplace:  '<br>　<zzz></zzz>$1',
-    },
-    linebreak: {
-      applyPattern:  /([^。\.\, 」"'》』\)）】≫＞>｣…―・！？\!\?])<br>/ig,
-      applyReplace:  '$1<yyy></yyy>',
-    },
-    wordWrap: {
-      applyPattern:  /(.)(\1{6})/ig,
-      applyReplace:  '$1$2<wbr>',
-    },
-    insertspace: {
-      applyPatterns: [
-        { pattern: /([^」』）》≫\)｣＞】>])<br>([＜【「『《≪（\(｢])/ig, replacement: '$1<ooo><br></ooo><br>$2' },
-        { pattern: /([」』）》≫\)｣＞】])<br>([^＜【「『《≪（\(｢<])/ig,  replacement: '$1<ooo><br></ooo><br>$2' },
-      ],
-    },
-  });
+  static #FORMAT_KEYS = Object.freeze(['spacing', 'indent', 'linebreak', 'wordWrap', 'insertspace']);
+  static #PRESERVE_BREAK = Symbol('preserveBreak');
 
   constructor(config) {
     this.#config       = config;
@@ -2525,33 +2503,133 @@ class StyleControlBar {
     });
   }
 
-  // 修正：退避したHTMLデータを使い、オンになっている設定のみを一方向かつ安全に再適用
+  #containers(root) {
+    return [root, ...root.querySelectorAll('*')];
+  }
+
+  #formatSpacing(root) {
+    for (const parent of this.#containers(root)) {
+      let node = parent.firstChild;
+      while (node) {
+        if (node.nodeName !== 'BR') {
+          node = node.nextSibling;
+          continue;
+        }
+
+        const sequence = [node];
+        let breakCount = 1;
+        let cursor = node.nextSibling;
+        while (cursor && (cursor.nodeName === 'BR' ||
+          (cursor.nodeType === Node.TEXT_NODE && /^[　]+$/.test(cursor.data)))) {
+          sequence.push(cursor);
+          if (cursor.nodeName === 'BR') breakCount++;
+          cursor = cursor.nextSibling;
+        }
+
+        if (breakCount >= 3) {
+          const first = sequence[0];
+          first[StyleControlBar.#PRESERVE_BREAK] = true;
+          first.after(document.createElement('br'));
+          sequence.slice(1).forEach(item => item.remove());
+          node = first.nextSibling?.nextSibling || null;
+        } else {
+          node = cursor;
+        }
+      }
+    }
+  }
+
+  #formatIndent(root) {
+    const excluded = new Set(Array.from('　 ＜【「『《≪（(｢<※'));
+    root.querySelectorAll('br').forEach(br => {
+      const text = br.nextSibling;
+      if (text?.nodeType !== Node.TEXT_NODE) return;
+      const withoutLeadingSpaces = text.data.replace(/^ +/, '');
+      const first = Array.from(withoutLeadingSpaces)[0];
+      if (!first || excluded.has(first)) return;
+      text.data = `　${withoutLeadingSpaces}`;
+    });
+  }
+
+  #formatLinebreak(root) {
+    const excluded = new Set(Array.from('。., 」"\'》』)）】≫＞>｣…―・！？!?'));
+    root.querySelectorAll('br').forEach(br => {
+      if (br[StyleControlBar.#PRESERVE_BREAK]) return;
+      const text = br.previousSibling;
+      if (text?.nodeType !== Node.TEXT_NODE) return;
+      const chars = Array.from(text.data);
+      const last = chars[chars.length - 1];
+      if (last && !excluded.has(last)) br.remove();
+    });
+  }
+
+  #formatWordWrap(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+    for (const text of textNodes) {
+      const pattern = /(.)(\1{6})/gi;
+      if (!pattern.test(text.data)) continue;
+      pattern.lastIndex = 0;
+
+      const fragment = document.createDocumentFragment();
+      let offset = 0;
+      for (const match of text.data.matchAll(pattern)) {
+        fragment.append(document.createTextNode(text.data.slice(offset, match.index + match[0].length)));
+        fragment.append(document.createElement('wbr'));
+        offset = match.index + match[0].length;
+      }
+      fragment.append(document.createTextNode(text.data.slice(offset)));
+      text.replaceWith(fragment);
+    }
+  }
+
+  #formatInsertspace(root) {
+    const opening = new Set(Array.from('＜【「『《≪（(｢'));
+    const closing = new Set(Array.from('」』）》≫)｣＞】'));
+    const closingOrTagEnd = new Set([...closing, '>']);
+
+    Array.from(root.querySelectorAll('br')).forEach(br => {
+      const previous = br.previousSibling;
+      const next = br.nextSibling;
+      if (previous?.nodeType !== Node.TEXT_NODE || next?.nodeType !== Node.TEXT_NODE) return;
+
+      const previousChars = Array.from(previous.data);
+      const previousChar = previousChars[previousChars.length - 1];
+      const nextChar = Array.from(next.data)[0];
+      const beforeDialogue = previousChar && nextChar && !closingOrTagEnd.has(previousChar) && opening.has(nextChar);
+      const afterDialogue = previousChar && nextChar && closing.has(previousChar) && !opening.has(nextChar) && nextChar !== '<';
+      if (beforeDialogue || afterDialogue) br.after(document.createElement('br'));
+    });
+  }
+
+  #applyFormat(root, key) {
+    switch (key) {
+      case 'spacing':     this.#formatSpacing(root); break;
+      case 'indent':      this.#formatIndent(root); break;
+      case 'linebreak':   this.#formatLinebreak(root); break;
+      case 'wordWrap':    this.#formatWordWrap(root); break;
+      case 'insertspace': this.#formatInsertspace(root); break;
+    }
+  }
+
+  // 元のDOM複製へ設定を一方向に適用し、HTML文字列の再解析を避ける。
   #applyFormats() {
     const content = document.querySelector('blockquote');
-    if (!content || this.#originalHTML === null) return;
+    if (!content || this.#originalContent === null) return;
 
     const bar = document.getElementById('style-control-bar');
     if (!bar) return;
 
-    let html = this.#originalHTML;
-
-    for (const [key, rule] of Object.entries(StyleControlBar.#FORMAT_RULES)) {
+    const nextContent = this.#originalContent.cloneNode(true);
+    const saved = StorageManager.getStyleBarSettings();
+    for (const key of StyleControlBar.#FORMAT_KEYS) {
       const cb = bar.querySelector(`#format-${key}`);
-      const saved = StorageManager.getStyleBarSettings();
       const enabled = cb ? cb.checked : (saved ? !!saved.formats?.[key] : !!this.#config.autoExecute[key]);
-
-      if (enabled) {
-        if (key === 'insertspace') {
-          html = rule.applyPatterns.reduce((acc, { pattern, replacement }) => acc.replace(pattern, replacement), html);
-        } else {
-          html = html.replace(rule.applyPattern, rule.applyReplace);
-        }
-      }
+      if (enabled) this.#applyFormat(nextContent, key);
     }
-
-    if (content.innerHTML !== html) {
-      content.innerHTML = html;
-    }
+    content.replaceChildren(nextContent);
   }
 
   #saveSettings() {
@@ -2732,10 +2810,11 @@ class StyleControlBar {
   init() {
     if (this.#isInitialized || !this.#config.viewer?.styleBar) return;
 
-    // 修正：初期化段階でプレーンなオリジナルのHTMLを完全退避
+    // 初期化時のDOMを複製し、設定変更のたびに同じ原文から整形し直す。
     const content = document.querySelector('blockquote');
     if (content) {
-      this.#originalHTML = content.innerHTML;
+      this.#originalContent = document.createDocumentFragment();
+      Array.from(content.childNodes).forEach(node => this.#originalContent.append(node.cloneNode(true)));
     }
 
     ensureStyleElement('atb-style-bar', CSS_DEFS.styleBar);

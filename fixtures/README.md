@@ -15,6 +15,7 @@
 | `ss-article-first.html` | SS単話表示・第1話 |
 | `ss-article-middle.html` | SS単話表示・中間話 |
 | `ss-article-last.html` | SS単話表示・最終話 |
+| `ss-article-formatting.html` | SS本文の体裁整形5機能 |
 | `ss-article-all.html` | SS全話表示 |
 | `impression.html` | 感想ページ |
 | `main-list.html` | メイン掲示板の一覧 |
