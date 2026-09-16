@@ -386,6 +386,46 @@ const TESTS = [
         doc.querySelector('#favorites-copy-status')?.textContent.includes('インポートしました');
     },
   },
+  {
+    id: 'T-31', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '検索中にお気に入りを追加しても絞り込みを維持',
+    async check(doc, win) {
+      doc.querySelector('.fm-toggle-button')?.click();
+      const search = doc.querySelector('#search-favorites');
+      const title = doc.querySelector('#new-favorite');
+      if (!search || !title) return false;
+      search.value = '架空作品';
+      search.dispatchEvent(new win.Event('input', { bubbles: true }));
+      await new Promise(resolve => win.setTimeout(resolve, 350));
+      title.value = '検索外の新規作品';
+      doc.querySelector('#add-favorite')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_favorites') || '{}');
+      const listText = doc.querySelector('#favorites-list-container')?.textContent || '';
+      return search.classList.contains('active') &&
+        saved.primary?.some(item => item.title === '検索外の新規作品') &&
+        listText.includes('架空作品') && !listText.includes('検索外の新規作品');
+    },
+  },
+  {
+    id: 'T-32', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '検索中にインポートしても絞り込みを維持',
+    async check(doc, win) {
+      doc.querySelector('.fm-toggle-button')?.click();
+      const search = doc.querySelector('#search-favorites');
+      if (!search) return false;
+      search.value = '対象';
+      search.dispatchEvent(new win.Event('input', { bubbles: true }));
+      await new Promise(resolve => win.setTimeout(resolve, 350));
+      doc.querySelector('#import-favorites')?.click();
+      const ta = doc.querySelector('#import-text');
+      if (!ta) return false;
+      ta.value = '## 最重要お気に入り\n- 検索対象の作品\n- 検索外の作品';
+      doc.querySelector('#import-favorites')?.click();
+      const listText = doc.querySelector('#favorites-list-container')?.textContent || '';
+      return search.classList.contains('active') && listText.includes('検索対象の作品') &&
+        !listText.includes('検索外の作品');
+    },
+  },
 ];
 
 function saveStorage() {

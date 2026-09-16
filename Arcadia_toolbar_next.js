@@ -3021,7 +3021,8 @@ class FavoritesManager {
       this.favorites[category].push({ title, memo });
     }
     this.#save();
-    this.searchResults = null;
+    if (this.#searchTerm) this.#search(this.#searchTerm);
+    else this.searchResults = null;
   }
 
   #remove(category, title) {
@@ -3108,7 +3109,8 @@ class FavoritesManager {
     if (!importedCount) return 0;
     this.favorites = result;
     this.#save();
-    this.searchResults = null;
+    if (this.#searchTerm) this.#search(this.#searchTerm);
+    else this.searchResults = null;
     FavoritesUIBuilder.refreshList(this);
     return importedCount;
   }
