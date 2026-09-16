@@ -650,6 +650,13 @@ const TESTS = [
         panel.style.display === 'block' && panel.style.opacity === '1';
     },
   },
+  {
+    id: 'T-46', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: 'テスト板リンク削除設定で空アンカーを残さない',
+    check(doc) {
+      return !doc.querySelector('#new_sstable a[href*="cate=test"]');
+    },
+  },
 ];
 
 function saveStorage() {

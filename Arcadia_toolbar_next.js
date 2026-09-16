@@ -2155,7 +2155,7 @@ class IndexPopupHandler {
 class LinkOptimizer {
   static #RULES = Object.freeze([
     { flag: 'skipXXXWarning',    target: 'href', pattern: /act=18attention/i,   replacement: 'act=list&cate=18&page=1' },
-    { flag: 'removeTestBoard',   target: 'text', pattern: /テスト板/i,            replacement: '' },
+    { flag: 'removeTestBoard',   target: 'remove', pattern: /テスト板/i },
     { flag: 'openSSInNewTab',    target: 'attr', attrName: 'target', attrValue: '_blank', pattern: /(count=1)/i },
     { flag: 'skipSearchWarning', target: 'href', pattern: /sss\.php$/i,          replacement: 'sss.php?act=list&cate=all&page=1' },
     { flag: 'skipMainWarning',   target: 'href', pattern: /mainbbs\.php$/i,      replacement: 'mainbbs.php?act=list&cate=all&page=1' },
@@ -2180,9 +2180,11 @@ class LinkOptimizer {
             href = href.replace(rule.pattern, rule.replacement);
             link.setAttribute('href', href);
           }
-        } else if (rule.target === 'text') {
-          // 修正：textContent 直接代入によるDOM破壊を防止するヘルパーを呼ぶ
-          this.#replaceTextNodes(link, rule.pattern, rule.replacement);
+        } else if (rule.target === 'remove') {
+          if (rule.pattern.test(link.textContent || '')) {
+            link.remove();
+            break;
+          }
         } else if (rule.target === 'attr') {
           if (rule.pattern.test(href)) {
             link.setAttribute(rule.attrName, rule.attrValue);
@@ -2192,18 +2194,6 @@ class LinkOptimizer {
     });
   }
 
-  // 修正：追加された安全なテキストノード専用置換ヘルパー
-  #replaceTextNodes(node, pattern, replacement) {
-    if (node.nodeType === 3) { // Text Node
-      if (pattern.test(node.nodeValue)) {
-        node.nodeValue = node.nodeValue.replace(pattern, replacement);
-      }
-    } else {
-      for (const child of Array.from(node.childNodes)) {
-        this.#replaceTextNodes(child, pattern, replacement);
-      }
-    }
-  }
 }
 
 /* --------------------------------------------------
