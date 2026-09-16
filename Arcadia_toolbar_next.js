@@ -1277,17 +1277,18 @@ class ThemeManager {
   /** テーマを切り替える */
   toggle() {
     this.#current = ThemeManager.#STATES[this.#current]?.next ?? 'light';
+    // DOMを先に更新し、通知はStorageManagerのwindowイベント経由に一本化する。
+    this.#apply(false);
     StorageManager.setTheme(this.#current);
-    this.#apply();
   }
 
   /** テーマを DOM に適用する */
-  #apply() {
+  #apply(notify = true) {
     document.documentElement.setAttribute('data-theme', this.#current);
     if (this.#button) {
       this.#button.textContent = ThemeManager.#STATES[this.#current]?.icon ?? '🌙';
     }
-    EventBus.emit('arcadia:theme-updated', { theme: this.#current });
+    if (notify) EventBus.emit('arcadia:theme-updated', { theme: this.#current });
   }
 
   init() {

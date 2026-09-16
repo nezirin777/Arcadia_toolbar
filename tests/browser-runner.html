@@ -340,6 +340,19 @@ const TESTS = [
         doc.querySelector('#format-wordWrap')?.checked === false;
     },
   },
+  {
+    id: 'T-28', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: 'テーマ切替1回につき内部テーマ更新通知を1回だけ発火',
+    check(doc, win) {
+      const probe = doc.createElement('script');
+      probe.textContent = `window.__arcadiaThemeEventCount = 0;
+        EventBus.on('arcadia:theme-updated', () => window.__arcadiaThemeEventCount++);`;
+      doc.documentElement.appendChild(probe);
+      doc.querySelector('#theme-toggle-button')?.click();
+      return win.__arcadiaThemeEventCount === 1 &&
+        doc.documentElement.dataset.theme === 'dark' && localStorage.getItem('ss-theme') === 'dark';
+    },
+  },
 ];
 
 function saveStorage() {
