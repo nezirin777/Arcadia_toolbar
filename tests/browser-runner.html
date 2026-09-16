@@ -634,6 +634,22 @@ const TESTS = [
       return opened && button.getAttribute('aria-expanded') === 'false';
     },
   },
+  {
+    id: 'T-45', fixture: 'ss-article-first.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10001&n=0&count=1',
+    label: '目次ポップアップの非表示アニメーション中に再表示',
+    async check(doc, win) {
+      const button = doc.querySelector('#seaiz');
+      const panel = doc.querySelector('#tableind');
+      if (!button || !panel) return false;
+      button.click();
+      button.click();
+      await new Promise(resolve => win.setTimeout(resolve, 350));
+      button.dispatchEvent(new win.Event('mouseover'));
+      await new Promise(resolve => win.setTimeout(resolve, 350));
+      return button.getAttribute('aria-expanded') === 'true' &&
+        panel.style.display === 'block' && panel.style.opacity === '1';
+    },
+  },
 ];
 
 function saveStorage() {

@@ -1916,6 +1916,7 @@ class IndexPopupHandler {
   #panel = null;
   #isVisible = false;
   #hideTimer = null;
+  #animationTimer = null;
   #resizeRaf = 0;
 
   static #ANIM_MS  = 300;
@@ -2013,9 +2014,9 @@ class IndexPopupHandler {
 
   #show() {
     clearTimeout(this.#hideTimer);
+    clearTimeout(this.#animationTimer);
     if (!this.#panel) return;
     this.#button?.setAttribute('aria-expanded', 'true');
-    if (this.#isVisible) return;
     this.#panel.style.display = 'block';
     requestAnimationFrame(() => {
       this.#panel.style.opacity   = '1';
@@ -2027,11 +2028,12 @@ class IndexPopupHandler {
   #hide() {
     if (!this.#panel || !this.#isVisible) return;
     clearTimeout(this.#hideTimer);
+    clearTimeout(this.#animationTimer);
     this.#button?.setAttribute('aria-expanded', 'false');
     this.#hideTimer = setTimeout(() => {
       this.#panel.style.opacity   = '0';
       this.#panel.style.transform = 'translateY(-10px)';
-      setTimeout(() => {
+      this.#animationTimer = setTimeout(() => {
         if (this.#panel) this.#panel.style.display = 'none';
         this.#isVisible = false;
       }, IndexPopupHandler.#ANIM_MS);
@@ -2130,6 +2132,9 @@ class IndexPopupHandler {
   }
 
   destroy() {
+    clearTimeout(this.#hideTimer);
+    clearTimeout(this.#animationTimer);
+    if (this.#resizeRaf) cancelAnimationFrame(this.#resizeRaf);
     document.removeEventListener('keydown', this.#onKeyDown);
     window.removeEventListener('resize',   this.#onResize);
     document.getElementById('seaiz')?.remove();
