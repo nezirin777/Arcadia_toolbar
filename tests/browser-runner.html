@@ -548,6 +548,27 @@ const TESTS = [
       return keptPartial && input.value === '1' && saved.ssList?.adsThreshold === 1;
     },
   },
+  {
+    id: 'T-40', fixture: 'ss-article-formatting.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10002&n=0&count=1',
+    label: '体裁バーの不正・欠落保存値をキー単位で既定値へ補完',
+    setupStorage() {
+      localStorage.setItem('style-control-bar-settings', JSON.stringify({
+        styles: { width: '999%', lineHeight: 125, color: '#not-option' },
+        formats: { indent: 'false', linebreak: 1, wordWrap: false },
+        theme: 'light',
+      }));
+    },
+    check(doc) {
+      const table = doc.querySelector('table.brdr');
+      const cell = doc.querySelector('td.bgc');
+      return doc.querySelector('#style-width')?.value === 'standard' &&
+        table?.style.getPropertyValue('width') === '90%' &&
+        cell?.style.getPropertyValue('line-height') === '150%' &&
+        doc.querySelector('#format-indent')?.checked === false &&
+        doc.querySelector('#format-linebreak')?.checked === false &&
+        doc.querySelector('#format-wordWrap')?.checked === false;
+    },
+  },
 ];
 
 function saveStorage() {

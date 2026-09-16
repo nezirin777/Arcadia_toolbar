@@ -2659,28 +2659,31 @@ class StyleControlBar {
 
   #loadSettings() {
     const saved = StorageManager.getStyleBarSettings();
-    if (!saved || typeof saved !== 'object') return false;
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return false;
 
-    const styles = saved.styles && typeof saved.styles === 'object' ? { ...saved.styles } : {};
-    const formats = saved.formats && typeof saved.formats === 'object' ? saved.formats : {};
-    if (saved.theme !== this.#currentTheme) {
-      styles.color = 'standard';
-      styles.backgroundColor = 'standard';
-    }
+    const styles = saved.styles && typeof saved.styles === 'object' && !Array.isArray(saved.styles)
+      ? saved.styles : {};
+    const formats = saved.formats && typeof saved.formats === 'object' && !Array.isArray(saved.formats)
+      ? saved.formats : {};
+    const themeChanged = saved.theme !== this.#currentTheme;
     const bar = document.getElementById('style-control-bar');
     if (!bar) return false;
-    Object.entries(styles).forEach(([key, val]) => {
+
+    Object.keys(StyleControlBar.#STYLE_MAP).forEach(key => {
       const sel = bar.querySelector(`#style-${key}`);
       if (!sel) return;
-      if (Array.from(sel.options).some(o => o.value === val)) {
-        sel.value = val;
-        this.#applyStyle(key, val === 'standard' ? this.#defaults[key] : val);
-        sel.options[0].textContent = `[標準: ${this.#defaults[key]}]`;
-      }
+      const savedValue = themeChanged && ['color', 'backgroundColor'].includes(key)
+        ? 'standard' : styles[key];
+      const value = typeof savedValue === 'string' && Array.from(sel.options).some(o => o.value === savedValue)
+        ? savedValue : 'standard';
+      sel.value = value;
+      this.#applyStyle(key, value === 'standard' ? this.#defaults[key] : value);
+      sel.options[0].textContent = `[標準: ${this.#defaults[key]}]`;
     });
-    Object.entries(formats).forEach(([key, val]) => {
+
+    StyleControlBar.#FORMAT_KEYS.forEach(key => {
       const cb = bar.querySelector(`#format-${key}`);
-      if (cb) cb.checked = val;
+      if (cb && typeof formats[key] === 'boolean') cb.checked = formats[key];
     });
     this.#applyFormats();
     return true;
