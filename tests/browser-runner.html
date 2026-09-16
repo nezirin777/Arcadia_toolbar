@@ -516,6 +516,38 @@ const TESTS = [
         items.some(text => text.includes('正常NG')) && !items.some(text => text.includes('123'));
     },
   },
+  {
+    id: 'T-38', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '色コードの入力中は下書きを保持し、保存時に確定',
+    check(doc, win) {
+      doc.querySelector('.se-settings-button')?.click();
+      const input = doc.querySelector('#style-themes-light-color');
+      if (!input) return false;
+      input.value = '#';
+      input.dispatchEvent(new win.Event('input', { bubbles: true }));
+      const keptPartial = input.value === '#';
+      input.value = '#123456';
+      input.dispatchEvent(new win.Event('input', { bubbles: true }));
+      doc.querySelector('[data-action="save"]')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_config') || '{}');
+      return keptPartial && input.value === '#123456' && saved.style?.themes?.light?.color === '#123456';
+    },
+  },
+  {
+    id: 'T-39', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '数値入力の空文字は編集中だけ保持し、保存時に既定値へ補正',
+    check(doc, win) {
+      doc.querySelector('.se-settings-button')?.click();
+      const input = doc.querySelector('#ssList-adsThreshold');
+      if (!input) return false;
+      input.value = '';
+      input.dispatchEvent(new win.Event('input', { bubbles: true }));
+      const keptPartial = input.value === '';
+      doc.querySelector('[data-action="save"]')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_config') || '{}');
+      return keptPartial && input.value === '1' && saved.ssList?.adsThreshold === 1;
+    },
+  },
 ];
 
 function saveStorage() {

@@ -3433,6 +3433,7 @@ class SettingsEditor {
           this.#set(path, this.#validate(raw, type, def?.value));
         });
         this.#configManager.save(this.#currentConfig);
+        this.#refreshUI(editor);
         const status = editor.querySelector('#settings-status');
         if (status) status.textContent = '設定を保存しました。ページをリロードすると反映されます。';
         return;
@@ -3461,10 +3462,7 @@ class SettingsEditor {
       const def = this.#findFieldDef(input.dataset.path);
       if (!def) return;
       const raw = def.type === 'checkbox' ? input.checked : input.value;
-      const val = this.#validate(raw, def.type, def.value);
-      if (def.type === 'checkbox') input.checked = !!val;
-      else input.value = val;
-      this.#set(input.dataset.path, val);
+      this.#set(input.dataset.path, raw);
     });
   }
 
