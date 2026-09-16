@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>架空の話題A</title></head>
+<body>
+<table id="table" class="brdr">
+  <tr><td class="bgb">架空の話題A</td></tr>
+  <tr><td class="bgc"><blockquote>これはメイン掲示板用の架空投稿です。</blockquote></td></tr>
+  <tr><td class="bgb">架空の返信</td></tr>
+  <tr><td class="bgc"><blockquote>これは検証用の架空返信です。</blockquote></td></tr>
+</table>
+<form method="post" action="/bbs/main/main.php">
+  <input type="hidden" name="act" value="post">
+  <input type="hidden" name="all" value="20001">
+  <label>名前 <input name="name"></label>
+  <label>本文 <textarea name="comment"></textarea></label>
+  <label>パスワード <input type="password" name="password"></label>
+  <input type="submit" value="返信">
+</form>
+</body>
+</html>
