@@ -300,43 +300,47 @@ const StorageManager = (() => {
     catch { return fallback; }
   }
 
+  const isPlainObject = value =>
+    value !== null && typeof value === 'object' && !Array.isArray(value);
+
+  /**
+   * 既定値をスキーマとして保存設定を再帰マージする。
+   * 既知キーの異常型は既定値へ戻し、未知キーは将来互換のため保持する。
+   */
+  function mergeConfig(base, stored) {
+    if (!isPlainObject(base)) return base;
+
+    const result = {};
+    for (const [key, defaultValue] of Object.entries(base)) {
+      const storedValue = isPlainObject(stored) ? stored[key] : undefined;
+      if (isPlainObject(defaultValue)) {
+        result[key] = mergeConfig(defaultValue, storedValue);
+      } else if (Array.isArray(defaultValue)) {
+        result[key] = Array.isArray(storedValue) ? [...storedValue] : [...defaultValue];
+      } else {
+        result[key] = typeof storedValue === typeof defaultValue ? storedValue : defaultValue;
+      }
+    }
+
+    if (isPlainObject(stored)) {
+      for (const [key, value] of Object.entries(stored)) {
+        if (!(key in base)) result[key] = value;
+      }
+    }
+    return result;
+  }
+
   // ---- config ----
 
   /**
    * 設定を読み込む。
-   * stored と defaultConfig を shallow + partial deep merge して返す。
-   * （既存 StyleThemeManager.#loadConfig の移植）
+   * defaultConfig をスキーマとして、保存値を型検証しながら再帰マージする。
    * @param {object} defaultConfig
    * @returns {object}
    */
   function getConfig(defaultConfig) {
     const stored = safeParse(localStorage.getItem(KEYS.config), null);
-    if (!stored) return JSON.parse(JSON.stringify(defaultConfig));
-
-    const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
-    const merge = (base, over) => isObj(over) ? { ...base, ...over } : base;
-
-    return {
-      ...defaultConfig,
-      ...stored,
-      style: {
-        ...(defaultConfig.style || {}),
-        ...(isObj(stored.style) ? stored.style : {}),
-        themes: {
-          ...(defaultConfig.style?.themes || {}),
-          ...(isObj(stored.style?.themes) ? stored.style.themes : {}),
-          light: merge(defaultConfig.style?.themes?.light || {}, stored.style?.themes?.light),
-          dark:  merge(defaultConfig.style?.themes?.dark  || {}, stored.style?.themes?.dark),
-        },
-      },
-      favorites:   merge(defaultConfig.favorites   || {}, stored.favorites),
-      autoExecute: merge(defaultConfig.autoExecute || {}, stored.autoExecute),
-      viewer:      merge(defaultConfig.viewer       || {}, stored.viewer),
-      board:       merge(defaultConfig.board        || {}, stored.board),
-      // 修正：ssList と posting のマージ処理漏れを解消
-      ssList:      merge(defaultConfig.ssList       || {}, stored.ssList),
-      posting:     merge(defaultConfig.posting      || {}, stored.posting),
-    };
+    return mergeConfig(defaultConfig, stored);
   }
 
   /**

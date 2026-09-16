@@ -314,6 +314,32 @@ const TESTS = [
       return target?.dataset.repeat === 'aaaaaaa' && target.querySelector('em')?.textContent === '装飾要素';
     },
   },
+  {
+    id: 'T-26', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '破損した設定・お気に入りJSONを既定値へ安全にフォールバック',
+    setupStorage() {
+      localStorage.setItem('arcadia_config', '{broken-json');
+      localStorage.setItem('arcadia_favorites', '[broken-json');
+    },
+    check(doc) {
+      return !!doc.querySelector('#sslist_table') && !!doc.querySelector('.se-settings-button') &&
+        !findRow(doc, '架空作品A')?.classList.contains('list-favorite-primary');
+    },
+  },
+  {
+    id: 'T-27', fixture: 'ss-article-first.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10001&n=0&count=1',
+    label: '設定の異常型を既定値へ戻し、正しい型の保存値は維持',
+    setupStorage() {
+      localStorage.setItem('arcadia_config', JSON.stringify({
+        viewer: { styleBar: 0, fixedIndex: false },
+        autoExecute: { wordWrap: false },
+      }));
+    },
+    check(doc) {
+      return !!doc.querySelector('#style-control-bar') && !doc.querySelector('#tableind') &&
+        doc.querySelector('#format-wordWrap')?.checked === false;
+    },
+  },
 ];
 
 function saveStorage() {
@@ -353,6 +379,7 @@ async function loadTest(test, source) {
   const doc = frame.contentDocument;
   win.history.replaceState({}, '', test.route);
   installTestStorage();
+  test.setupStorage?.();
 
   win.addEventListener('error', event => errors.push(event.message || 'window error'));
   const originalError = win.console.error.bind(win.console);
