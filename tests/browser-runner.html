@@ -426,6 +426,74 @@ const TESTS = [
         !listText.includes('検索外の作品');
     },
   },
+  {
+    id: 'T-33', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '保存データがない初回利用でお気に入りを追加',
+    setupStorage() {
+      localStorage.removeItem('arcadia_favorites');
+    },
+    check(doc, win) {
+      doc.querySelector('.fm-toggle-button')?.click();
+      const title = doc.querySelector('#new-favorite');
+      if (!title) return false;
+      title.value = '初回登録の架空作品';
+      doc.querySelector('#add-favorite')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_favorites') || '{}');
+      return saved.primary?.some(item => item.title === '初回登録の架空作品') &&
+        doc.querySelector('#favorites-list-container')?.textContent.includes('初回登録の架空作品');
+    },
+  },
+  {
+    id: 'T-34', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '同じお気に入りの再追加は重複させずメモを更新',
+    check(doc, win) {
+      doc.querySelector('.fm-toggle-button')?.click();
+      const title = doc.querySelector('#new-favorite');
+      const memo = doc.querySelector('#new-favorite-memo');
+      if (!title || !memo) return false;
+      title.value = '架空作品';
+      memo.value = '更新済みメモ';
+      doc.querySelector('#add-favorite')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_favorites') || '{}');
+      const matches = saved.primary?.filter(item => item.title === '架空作品') || [];
+      return matches.length === 1 && matches[0]?.memo === '更新済みメモ';
+    },
+  },
+  {
+    id: 'T-35', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: 'インポート内の同一項目は最後の内容へ1件化',
+    check(doc, win) {
+      doc.querySelector('.fm-toggle-button')?.click();
+      doc.querySelector('#import-favorites')?.click();
+      const ta = doc.querySelector('#import-text');
+      if (!ta) return false;
+      ta.value = '## 最重要お気に入り\n- 重複作品 // 旧メモ\n- 重複作品 // 新メモ\n\n## NGワード\n- 重複NG\n- 重複NG';
+      doc.querySelector('#import-favorites')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_favorites') || '{}');
+      return saved.primary?.length === 1 && saved.primary[0]?.title === '重複作品' &&
+        saved.primary[0]?.memo === '新メモ' && saved.blocked?.length === 1 && saved.blocked[0] === '重複NG';
+    },
+  },
+  {
+    id: 'T-36', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '保存済みの重複データも読込時に最後の内容へ1件化',
+    setupStorage() {
+      localStorage.setItem('arcadia_favorites', JSON.stringify({
+        primary: [
+          { title: '保存重複作品', memo: '旧メモ' },
+          { title: '保存重複作品', memo: '新メモ' },
+        ],
+        secondary: [], watching: [], blocked: ['保存重複NG', '保存重複NG'],
+      }));
+    },
+    check(doc) {
+      doc.querySelector('.fm-toggle-button')?.click();
+      const items = Array.from(doc.querySelectorAll('.fm-item-title')).map(node => node.textContent);
+      return items.filter(text => text.includes('保存重複作品')).length === 1 &&
+        items.some(text => text.includes('新メモ')) &&
+        items.filter(text => text.includes('保存重複NG')).length === 1;
+    },
+  },
 ];
 
 function saveStorage() {

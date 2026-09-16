@@ -373,16 +373,23 @@ const StorageManager = (() => {
   function getFavorites(defaultFavorites) {
     const CATEGORIES = ['primary', 'secondary', 'watching', 'blocked'];
     const raw = safeParse(localStorage.getItem(KEYS.favorites), null);
-    if (!raw || typeof raw !== 'object') return { ...defaultFavorites };
+    const stored = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
 
     const result = {};
     for (const cat of CATEGORIES) {
-      const items = Array.isArray(raw[cat]) ? raw[cat] : (defaultFavorites[cat] || []);
-      result[cat] = items.filter(item =>
+      const items = Array.isArray(stored[cat]) ? stored[cat] : (defaultFavorites[cat] || []);
+      const validItems = items.filter(item =>
         cat === 'blocked'
           ? typeof item === 'string'
           : item && typeof item === 'object' && item.title
       );
+      if (cat === 'blocked') {
+        result[cat] = [...new Set(validItems)];
+      } else {
+        const byTitle = new Map();
+        for (const item of validItems) byTitle.set(item.title, item);
+        result[cat] = [...byTitle.values()];
+      }
     }
     return result;
   }
@@ -3018,7 +3025,9 @@ class FavoritesManager {
     if (category === 'blocked') {
       if (!this.favorites.blocked.includes(title)) this.favorites.blocked.push(title);
     } else {
-      this.favorites[category].push({ title, memo });
+      const existing = this.favorites[category].find(item => item.title === title);
+      if (existing) existing.memo = memo;
+      else this.favorites[category].push({ title, memo });
     }
     this.#save();
     if (this.#searchTerm) this.#search(this.#searchTerm);
@@ -3098,10 +3107,16 @@ class FavoritesManager {
       else if (line.startsWith('- ') && curCat) {
         const content = line.slice(2).trim();
         if (!content) continue;
-        if (curCat === 'blocked') result.blocked.push(content);
+        if (curCat === 'blocked') {
+          if (!result.blocked.includes(content)) result.blocked.push(content);
+        }
         else {
           const [title, memo = ''] = content.split(' // ').map(s => s.trim());
-          if (title) result[curCat].push({ title, memo });
+          if (title) {
+            const existing = result[curCat].find(item => item.title === title);
+            if (existing) existing.memo = memo;
+            else result[curCat].push({ title, memo });
+          }
         }
       }
     }
