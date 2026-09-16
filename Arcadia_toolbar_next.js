@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         ArcadiaToolBarNext
 // @namespace    ArcadiaToolBarNext
-// @description  小説の体裁を操作できるバーがＰＯＰしてくれます。(Arcadia専用) - Next構成版 (修正完了版)
+// @description  小説の体裁を操作できるバーがＰＯＰしてくれます。(Arcadia専用) - Next構成版
 // @include      http://www.mai-net.net/bbs/*
 // @include      https://www.mai-net.net/bbs/*
 // @include      http://mai-net.ath.cx/bbs/*
@@ -12,7 +12,7 @@
 
 
 /* ==================================================
- * ArcadiaToolBarNext — 完成版
+ * ArcadiaToolBarNext — 現行版
  * ==================================================
  * 既存 ArcadiaToolBar v3.00 を「仕様書」として参照しながら
  * 新規構造へ移植した Userscript 単体配布版。
@@ -105,8 +105,8 @@ const CONFIG = deepFreeze({
   posting: {
     autoFill: false,
     userInfo: {
-      name: 'ねじりん',
-      tripcode: 'eclipse',
+      name: '',
+      tripcode: '',
       password: '',
     },
   },
@@ -390,7 +390,10 @@ const StorageManager = (() => {
   function saveFavorites(favorites) {
     localStorage.setItem(KEYS.favorites, JSON.stringify(favorites));
     window.dispatchEvent(new CustomEvent('arcadia:favorites-updated', { detail: { favorites } }));
-    window.dispatchEvent(new Event('favorites-updated'));
+    const legacyEvent = new Event('favorites-updated');
+    // 旧イベント自体は維持しつつ、EventBusでの二重中継を防ぐ。
+    legacyEvent.arcadiaStorageManagerNotified = true;
+    window.dispatchEvent(legacyEvent);
   }
 
   // ---- theme ----
@@ -403,6 +406,12 @@ const StorageManager = (() => {
     const stored = localStorage.getItem(KEYS.theme);
     if (stored === 'light' || stored === 'dark') return stored;
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+
+  /** テーマが利用者によって明示設定されているか返す */
+  function hasThemePreference() {
+    const stored = localStorage.getItem(KEYS.theme);
+    return stored === 'light' || stored === 'dark';
   }
 
   /**
@@ -439,6 +448,7 @@ const StorageManager = (() => {
     getFavorites,
     saveFavorites,
     getTheme,
+    hasThemePreference,
     setTheme,
     getStyleBarSettings,
     saveStyleBarSettings,
@@ -507,7 +517,11 @@ const EventBus = (() => {
       window.addEventListener(name, e => emit(name, e.detail));
     }
     // 旧スクリプト互換イベントも中継
-    window.addEventListener('favorites-updated', () => emit('arcadia:favorites-updated', {}));
+    window.addEventListener('favorites-updated', e => {
+      // StorageManager発の互換イベントは、新イベントですでに中継済み。
+      if (e.arcadiaStorageManagerNotified) return;
+      emit('arcadia:favorites-updated', {});
+    });
   }
 
   return Object.freeze({ on, off, emit, bridgeWindowEvents });
@@ -1169,6 +1183,7 @@ const CSS_DEFS = {
     .fm-input{width:calc(100% - 70px);}
     .fm-textarea.memo{height:30px;width:100%;margin-top:5px;}
     .fm-textarea.io{width:100%;height:100px;margin-top:10px;font-family:monospace;}
+    .fm-status{min-height:1.4em;margin-top:6px;font-size:13px;color:var(--fm-text);}
     .fm-list{list-style:none;padding:0;margin:10px 0;max-height:350px;overflow-y:auto;}
     .fm-category-header{padding:5px;background:var(--fm-form-bg);font-weight:bold;border-bottom:1px solid var(--fm-border);}
     ul.fm-list li.fm-item{padding:5px;border-bottom:1px solid var(--fm-border);display:flex;justify-content:space-between;align-items:center;background:var(--fm-bg);}
@@ -1201,6 +1216,7 @@ const CSS_DEFS = {
     .se-button:hover{transform:translateY(-1px);}
     .se-button-primary{background:#27ae60;color:white;}
     .se-button-danger{background:#dc3545;color:white;}
+    .se-status{min-height:1.4em;padding:0 12px 4px;text-align:center;font-size:13px;color:var(--se-text);}
     .se-form-section h4{margin:8px 0 4px;font-size:14px;color:var(--se-text);}
     .se-settings-button{position:fixed;top:10px;left:20px;background:none;border:1px solid var(--se-border);font-size:16px;color:var(--se-text);cursor:pointer;padding:8px;border-radius:5px;z-index:1200;transition:all 0.2s ease;}
     .se-settings-button:hover{background-color:var(--se-hover);transform:translateY(-1px);}
@@ -1282,7 +1298,7 @@ class ThemeManager {
     // OS設定変更の監視
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
       // ユーザーが手動設定していない場合のみOS設定に従う
-      if (!localStorage.getItem(StorageManager.KEYS.theme)) {
+      if (!StorageManager.hasThemePreference()) {
         this.#current = e.matches ? 'dark' : 'light';
         this.#apply();
       }
@@ -1872,34 +1888,40 @@ class IndexPopupHandler {
 
   // ---- インデックス HTML 生成 ----
 
-  /** 単話ページ用インデックス（tableのinnerHTMLを整形して返す） */
+  /** 単話ページ用インデックス行をDOMとして複製する */
   #buildSingleIndex() {
     const table = document.getElementById('table');
-    if (!table) return '';
+    if (!table) return null;
 
     // タイトルをページタイトルに反映
     const firstLink = table.getElementsByTagName('a')[0];
     if (firstLink && document.title !== undefined) {
-      document.title = firstLink.innerHTML;
+      document.title = firstLink.textContent || '';
     }
 
-    return table.innerHTML
-      .replace(/<\/?b>/ig, '')
-      .replace(/%">([^\n])/ig, '%" noWrap>$1');
+    const clone = table.cloneNode(true);
+    clone.querySelectorAll('b').forEach(b => b.replaceWith(...b.childNodes));
+    clone.querySelectorAll('[width$="%"], [style*="width"]').forEach(node => {
+      node.setAttribute('nowrap', '');
+    });
+
+    const rows = document.createDocumentFragment();
+    Array.from(clone.rows).forEach(row => rows.appendChild(row));
+    return rows;
   }
 
   /** 全話ページ用インデックス（DOM で構築） */
   #buildAllIndex() {
     const bgbs = document.getElementsByClassName('bgb');
-    if (!bgbs.length) return '';
+    if (!bgbs.length) return null;
 
     // タイトルをページタイトルに反映
     const firstFont = bgbs[0].getElementsByTagName('font')[0];
     if (firstFont && document.title !== undefined) {
-      document.title = firstFont.innerHTML;
+      document.title = firstFont.textContent || '';
     }
 
-    const tbody = document.createElement('tbody');
+    const rows = document.createDocumentFragment();
 
     for (let i = 0; i < bgbs.length; i++) {
       const bgb     = bgbs[i];
@@ -1913,7 +1935,7 @@ class IndexPopupHandler {
         bgb.insertAdjacentElement('afterbegin', anchor);
       }
 
-      const linkTitle = fontEl.textContent?.trim() || fontEl.innerHTML;
+      const linkTitle = fontEl.textContent?.trim() || '';
 
       // 日付を bgb に続く bgc の tt[Date:] から抽出
       let date = '';
@@ -1936,10 +1958,10 @@ class IndexPopupHandler {
         ),
         el('td', { nowrap: '', text: date }),
       );
-      tbody.appendChild(tr);
+      rows.appendChild(tr);
     }
 
-    return tbody.innerHTML;
+    return rows;
   }
 
   // ---- パネル開閉 ----
@@ -1986,7 +2008,7 @@ class IndexPopupHandler {
     return btn;
   }
 
-  #buildPanel(indexHtml) {
+  #buildPanel(indexRows) {
     const panel = el('div', {
       id:    'tableind',
       class: 'ind_ind',
@@ -1997,7 +2019,7 @@ class IndexPopupHandler {
 
     const table = document.createElement('table');
     const tbody = document.createElement('tbody');
-    tbody.innerHTML = indexHtml;
+    tbody.appendChild(indexRows);
     table.appendChild(tbody);
     panel.appendChild(table);
 
@@ -2025,16 +2047,16 @@ class IndexPopupHandler {
 
     const { isSingleArticle, isAllArticles } = this.#getPageInfo();
 
-    let indexHtml = '';
-    if (isSingleArticle)  indexHtml = this.#buildSingleIndex();
-    else if (isAllArticles) indexHtml = this.#buildAllIndex();
-    if (!indexHtml) return;
+    let indexRows = null;
+    if (isSingleArticle)  indexRows = this.#buildSingleIndex();
+    else if (isAllArticles) indexRows = this.#buildAllIndex();
+    if (!indexRows?.childNodes.length) return;
 
     try {
       ensureStyleElement('atb-index-popup', CSS_DEFS.indexPopupBase);
 
       const button = this.#buildButton();
-      this.#panel  = this.#buildPanel(indexHtml);
+      this.#panel  = this.#buildPanel(indexRows);
 
       // ボタンイベント
       button.addEventListener('mouseover', () => this.#show());
@@ -2846,8 +2868,12 @@ class FavoritesUIBuilder {
       placeholder: '## 最重要お気に入り\n- タイトル1 // メモ1\n## NGワード\n- NGワード1',
     });
     importTa.style.display = 'none';
+    const status = el('div', {
+      id: 'favorites-copy-status', class: 'fm-status', role: 'status',
+      ariaLive: 'polite', text: '',
+    });
     const formSection = el('div', { class: 'fm-form-section' },
-      searchBox, catSelect, newFavInput, addBtn, memoTa, listWrap, ioButtons, exportTa, importTa
+      searchBox, catSelect, newFavInput, addBtn, memoTa, listWrap, ioButtons, exportTa, importTa, status
     );
     container.append(header, jumpWrap, formSection);
     return container;
@@ -2937,7 +2963,7 @@ class FavoritesManager {
     this.searchResults = result;
   }
 
-  #export() {
+  async #export() {
     const CC   = FavoritesUIBuilder.CATEGORY_CONFIG;
     const text = Object.entries(this.favorites)
       .filter(([, items]) => items.length)
@@ -2953,8 +2979,25 @@ class FavoritesManager {
     im.style.display = 'none';
     ta.style.display = 'block';
     ta.value = `# お気に入り一覧\n\n${text}`;
-    ta.select();
-    try { document.execCommand('copy'); } catch { /* 無視 */ }
+    let copied = false;
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(ta.value);
+        copied = true;
+      } catch { /* フォールバックへ */ }
+    }
+    if (!copied) {
+      ta.focus();
+      ta.select();
+      try { copied = document.execCommand('copy'); }
+      catch { copied = false; }
+    }
+    const status = document.getElementById('favorites-copy-status');
+    if (status) {
+      status.textContent = copied
+        ? 'お気に入り一覧をクリップボードへコピーしました。'
+        : '自動コピーできませんでした。選択済みの内容を手動でコピーしてください。';
+    }
     ta.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }
 
@@ -3019,7 +3062,7 @@ class FavoritesManager {
         FavoritesUIBuilder.refreshList(this);
         return;
       }
-      if (t.matches('#export-favorites')) { this.#export(); return; }
+      if (t.matches('#export-favorites')) { void this.#export(); return; }
       if (t.matches('#import-favorites')) {
         const ta = container.querySelector('#import-text');
         const ea = container.querySelector('#export-text');
@@ -3120,8 +3163,8 @@ class ConfigManager {
         displayName: '投稿設定',
         fields: [{ id: 'autoFill', label: '自動入力', type: 'checkbox', value: false }],
         userInfo: [
-          { id: 'name',     label: '名前',       type: 'text',     value: 'ねじりん' },
-          { id: 'tripcode', label: 'トリップ',   type: 'text',     value: 'eclipse' },
+          { id: 'name',     label: '名前',       type: 'text',     value: '' },
+          { id: 'tripcode', label: 'トリップ',   type: 'text',     value: '' },
           { id: 'password', label: 'パスワード', type: 'password', value: '' },
         ],
       },
@@ -3218,7 +3261,8 @@ class SettingsEditor {
       el('div', { class: 'se-form-section buttons' },
         el('button', { class: 'se-button se-button-primary', dataset: { action: 'save' },  type: 'button', text: '保存' }),
         el('button', { class: 'se-button se-button-danger',  dataset: { action: 'reset' }, type: 'button', text: 'リセット' }),
-      )
+      ),
+      el('div', { id: 'settings-status', class: 'se-status', role: 'status', ariaLive: 'polite', text: '' }),
     );
     const lists    = el('div', { class: 'se-lists-container' });
     const editable = this.#configManager.getEditableFields();
@@ -3270,13 +3314,15 @@ class SettingsEditor {
           this.#set(path, this.#validate(raw, type, def?.value));
         });
         this.#configManager.save(this.#currentConfig);
-        alert('設定を保存しました。ページをリロードして反映してください。');
+        const status = editor.querySelector('#settings-status');
+        if (status) status.textContent = '設定を保存しました。ページをリロードすると反映されます。';
         return;
       }
       if (t.dataset.action === 'reset') {
         this.#currentConfig = this.#configManager.reset();
         this.#refreshUI(editor);
-        alert('設定をリセットしました。ページをリロードして反映してください。');
+        const status = editor.querySelector('#settings-status');
+        if (status) status.textContent = '設定をリセットしました。ページをリロードすると反映されます。';
         return;
       }
       const catHeader = t.closest('.se-category-header');
@@ -3404,7 +3450,7 @@ function main() {
 
   boot({ config, parser, favMatcher, ngMatcher, themeManager, configManager });
 
-  console.info('[ArcadiaToolBarNext] v4.00 boot OK');
+  console.info('[ArcadiaToolBarNext] v5.01 boot OK');
 }
 
 /* --------------------------------------------------

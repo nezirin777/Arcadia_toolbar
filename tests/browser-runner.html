@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ArcadiaToolBar Next 回帰テスト</title>
+<style>
+  body { margin:20px; font-family:system-ui,sans-serif; color:#222; background:#f7f7f7; }
+  h1 { font-size:1.4rem; }
+  button { padding:8px 16px; cursor:pointer; }
+  table { width:100%; margin-top:16px; border-collapse:collapse; background:#fff; }
+  th, td { padding:8px; border:1px solid #bbb; text-align:left; vertical-align:top; }
+  th { background:#e8e8f8; }
+  .ok { color:#087a26; font-weight:bold; }
+  .ng { color:#b00020; font-weight:bold; }
+  .running { color:#735c00; font-weight:bold; }
+  #sandbox { position:absolute; left:-10000px; width:1280px; height:900px; border:0; }
+  code { white-space:nowrap; }
+</style>
+</head>
+<body>
+<h1>ArcadiaToolBar Next 回帰テスト</h1>
+<p>合成HTMLだけを使い、現行Userscriptの主要動作をブラウザ内で確認します。</p>
+<button id="run" type="button">全テスト実行</button>
+<span id="summary"></span>
+<table>
+  <thead><tr><th>ID</th><th>対象</th><th>確認内容</th><th>結果</th><th>詳細</th></tr></thead>
+  <tbody id="results"></tbody>
+</table>
+<iframe id="sandbox" title="テスト用サンドボックス"></iframe>
+<script>
+'use strict';
+
+const SCRIPT_URL = new URL('../Arcadia_toolbar_next.js', location.href).href;
+const FIXTURE_ROOT = new URL('../fixtures/', location.href);
+const STORAGE_KEYS = ['arcadia_config', 'arcadia_favorites', 'ss-theme', 'style-control-bar-settings'];
+
+const TEST_CONFIG = {
+  viewer: { styleBar: true, fixedIndex: true, skipErrorPage: true },
+  board: { embedPageLinks: true, sortDesc: true, japaneseDate: true, searchBar: false, hideSpam: false },
+  posting: {
+    autoFill: true,
+    userInfo: { name: '検証名', tripcode: '検証トリップ', password: '検証PW' },
+  },
+};
+
+const TEST_FAVORITES = {
+  primary: [
+    { title: '架空作品', memo: '' },
+    { title: '年齢制限用', memo: '' },
+    { title: '習作', memo: '' },
+    { title: '架空の話題', memo: '' },
+  ],
+  secondary: [],
+  watching: [],
+  blocked: ['作品B', '架空の質問', '条件に合う作品'],
+};
+
+const findRow = (doc, text) =>
+  Array.from(doc.querySelectorAll('tr.bgc')).find(row => row.textContent.includes(text)) || null;
+
+const valueOf = (form, name) => form?.querySelector(`[name="${name}"]`)?.value ?? null;
+
+function verify(checks) {
+  const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name);
+  return { passed: failed.length === 0, detail: failed.length ? `失敗: ${failed.join(', ')}` : '' };
+}
+
+const TESTS = [
+  {
+    id: 'T-01', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '通常SS一覧の再構築・直リンク・お気に入り・NG',
+    check(doc) {
+      const favorite = findRow(doc, '架空作品A');
+      const blocked = findRow(doc, '架空作品B');
+      return verify({
+        table: !!doc.querySelector('#sslist_table'),
+        allMessageLink: !!doc.querySelector('a[href*="act=all_msg"]'),
+        impressionLink: !!doc.querySelector('a[href*="act=impression"]'),
+        favorite: favorite?.classList.contains('list-favorite-primary'),
+        blocked: blocked?.classList.contains('list-blocked'),
+      });
+    },
+  },
+  {
+    id: 'T-02', fixture: 'ss-list-18.html', route: '/bbs/sst/sst.php?act=list&cate=18&page=1',
+    label: '18禁一覧のtable位置と警告スキップ',
+    check(doc) {
+      const favorite = findRow(doc, '年齢制限用の架空作品');
+      return verify({
+        table: !!doc.querySelector('#sslist_table'),
+        favorite: favorite?.classList.contains('list-favorite-primary'),
+        warningSkip: !!doc.querySelector('a[href*="act=list"][href*="cate=18"]'),
+      });
+    },
+  },
+  {
+    id: 'T-03', fixture: 'ss-list-chiraura.html', route: '/bbs/sst/sst.php?act=list&cate=tiraura&page=1',
+    label: 'チラシの裏固有列・全話リンク・感想列',
+    check(doc) {
+      const favorite = findRow(doc, '習作の架空作品');
+      return verify({
+        table: !!doc.querySelector('#sslist_table'),
+        favorite: favorite?.classList.contains('list-favorite-primary'),
+        allMessageLink: !!doc.querySelector('a[href*="act=all_msg"]'),
+        impressionHeader: !!doc.querySelector('tr.impression-added'),
+      });
+    },
+  },
+  {
+    id: 'T-04', fixture: 'ss-article-first.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10001&n=0',
+    label: '単話第1話の目次・体裁バー・次話補正',
+    check(doc) {
+      const next = Array.from(doc.querySelectorAll('a')).find(a => a.textContent.includes('次を表示する'));
+      return !!doc.querySelector('#style-control-bar') && !!doc.querySelector('#tableind') &&
+        next?.classList.contains('ss-next-link') && next.href.includes('n=1');
+    },
+  },
+  {
+    id: 'T-05', fixture: 'ss-article-middle.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10001&n=1',
+    label: '単話中間話の前話・次話補正',
+    check(doc) {
+      const prev = doc.querySelector('.ss-prev-link');
+      const next = doc.querySelector('.ss-next-link');
+      return prev?.href.includes('n=0') && next?.href.includes('n=2');
+    },
+  },
+  {
+    id: 'T-06', fixture: 'ss-article-last.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10001&n=2',
+    label: '単話最終話の目次・前話補正',
+    check(doc) {
+      const prev = doc.querySelector('.ss-prev-link');
+      return !!doc.querySelector('#tableind') && prev?.href.includes('n=1');
+    },
+  },
+  {
+    id: 'T-07', fixture: 'ss-article-all.html', route: '/bbs/sst/sst.php?act=all_msg&cate=all&all=10001',
+    label: '全話表示の目次・アンカー・体裁バー',
+    check(doc) {
+      return !!doc.querySelector('#style-control-bar') && !!doc.querySelector('#tableind') &&
+        doc.querySelectorAll('td.bgb > a[name]').length === 3 &&
+        doc.querySelectorAll('#tableind a[href^="#"]').length === 3;
+    },
+  },
+  {
+    id: 'T-08', fixture: 'impression.html', route: '/bbs/sst/sst.php?act=impression&cate=all&no=10001&page=1',
+    label: '感想逆順・日本語日付・ページリンク・投稿補完',
+    check(doc) {
+      const text = doc.querySelector('.ss-comment-table')?.textContent || '';
+      const write = Array.from(doc.forms).find(f => f.querySelector('[name="act"]')?.value === 'write_impression');
+      return text.indexOf('感想投稿者C') < text.indexOf('感想投稿者A') &&
+        text.includes('2099/01/04 (日)') &&
+        doc.querySelectorAll('.ss-pagination-table').length >= 2 &&
+        valueOf(write, 'iname') === '検証名' && valueOf(write, 'itrip') === '検証トリップ' &&
+        valueOf(write, 'ipass') === '検証PW';
+    },
+  },
+  {
+    id: 'T-09', fixture: 'main-list.html', route: '/bbs/mainbbs/mainbbs.php?act=list&cate=all&page=1',
+    label: 'メイン掲示板一覧のお気に入り・NG',
+    check(doc) {
+      return verify({
+        table: !!doc.querySelector('#mainlist_table'),
+        favorite: findRow(doc, '架空の話題A')?.classList.contains('list-favorite-primary'),
+        blocked: findRow(doc, '架空の質問B')?.classList.contains('list-blocked'),
+      });
+    },
+  },
+  {
+    id: 'T-10', fixture: 'main-article.html', route: '/bbs/mainbbs/mainbbs.php?act=dump&cate=all&all=20001',
+    label: 'メイン掲示板返信フォームだけを自動補完',
+    check(doc) {
+      const post = Array.from(doc.forms).find(f => f.querySelector('[name="act"]')?.value === 'post');
+      return valueOf(post, 'name') === '検証名' && valueOf(post, 'password') === '検証PW' &&
+        doc.querySelector('blockquote')?.textContent.includes('架空投稿');
+    },
+  },
+  {
+    id: 'T-11', fixture: 'search-list.html', route: '/bbs/sss/sss.php?act=list&cate=all&page=1',
+    label: '捜索掲示板一覧のお気に入り・NG',
+    check(doc) {
+      return verify({
+        table: !!doc.querySelector('#mainlist_table'),
+        favorite: findRow(doc, '架空作品を探しています')?.classList.contains('list-favorite-primary'),
+        blocked: findRow(doc, '架空の条件に合う作品')?.classList.contains('list-blocked'),
+      });
+    },
+  },
+  {
+    id: 'T-12', fixture: 'search-article.html', route: '/bbs/sss/sss.php?act=dump&cate=all&all=30001',
+    label: '捜索掲示板返信フォームだけを自動補完',
+    check(doc) {
+      const post = Array.from(doc.forms).find(f => f.querySelector('[name="act"]')?.value === 'post');
+      return valueOf(post, 'name') === '検証名' && valueOf(post, 'trip') === '検証トリップ' &&
+        valueOf(post, 'password') === '検証PW';
+    },
+  },
+  {
+    id: 'T-13', fixture: 'impression.html', route: '/bbs/sst/sst.php?act=impression&cate=all&no=10001&page=1',
+    label: '感想の編集・削除フォームを自動補完しない',
+    check(doc) {
+      const forms = Array.from(doc.forms);
+      const edit = forms.find(f => f.querySelector('[name="act"]')?.value === 'edit_impression');
+      const del = forms.find(f => f.querySelector('[name="act"]')?.value === 'del_impression');
+      const write = forms.find(f => f.querySelector('[name="act"]')?.value === 'write_impression');
+      return valueOf(edit, 'ipass') === '' && valueOf(del, 'ipass') === '' && valueOf(write, 'ipass') === '検証PW';
+    },
+  },
+  {
+    id: 'T-16', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '設定保存を画面内の非blocking通知で案内',
+    check(doc) {
+      doc.querySelector('.se-settings-button')?.click();
+      doc.querySelector('[data-action="save"]')?.click();
+      return doc.querySelector('#settings-status')?.textContent.includes('設定を保存しました');
+    },
+  },
+  {
+    id: 'T-17', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: 'お気に入り書き出しでClipboard APIを優先',
+    async check(doc, win) {
+      let written = '';
+      try {
+        Object.defineProperty(win.navigator, 'clipboard', {
+          configurable: true,
+          value: { writeText: async text => { written = text; } },
+        });
+      } catch {
+        return false;
+      }
+      doc.querySelector('.fm-toggle-button')?.click();
+      doc.querySelector('#export-favorites')?.click();
+      await new Promise(resolve => win.setTimeout(resolve, 20));
+      return written.includes('# お気に入り一覧') &&
+        doc.querySelector('#favorites-copy-status')?.textContent.includes('コピーしました');
+    },
+  },
+];
+
+function saveStorage() {
+  return Object.fromEntries(STORAGE_KEYS.map(key => [key, localStorage.getItem(key)]));
+}
+
+function restoreStorage(saved) {
+  for (const key of STORAGE_KEYS) {
+    if (saved[key] == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, saved[key]);
+  }
+}
+
+function installTestStorage() {
+  localStorage.setItem('arcadia_config', JSON.stringify(TEST_CONFIG));
+  localStorage.setItem('arcadia_favorites', JSON.stringify(TEST_FAVORITES));
+  localStorage.setItem('ss-theme', 'light');
+  localStorage.removeItem('style-control-bar-settings');
+}
+
+function waitForUi(win) {
+  return new Promise(resolve => {
+    win.requestAnimationFrame(() => win.requestAnimationFrame(() => win.setTimeout(resolve, 80)));
+  });
+}
+
+async function loadTest(test, source) {
+  const frame = document.getElementById('sandbox');
+  const errors = [];
+  frame.src = new URL(test.fixture, FIXTURE_ROOT).href + `?runner=${Date.now()}`;
+  await new Promise((resolve, reject) => {
+    frame.onload = resolve;
+    frame.onerror = () => reject(new Error('フィクスチャを読み込めません'));
+  });
+
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  win.history.replaceState({}, '', test.route);
+  installTestStorage();
+
+  win.addEventListener('error', event => errors.push(event.message || 'window error'));
+  const originalError = win.console.error.bind(win.console);
+  win.console.error = (...args) => {
+    errors.push(args.map(String).join(' '));
+    originalError(...args);
+  };
+
+  const script = doc.createElement('script');
+  script.textContent = `${source}\n//# sourceURL=Arcadia_toolbar_next.test.js`;
+  doc.documentElement.appendChild(script);
+  await waitForUi(win);
+
+  const pageshow = new win.Event('pageshow');
+  Object.defineProperty(pageshow, 'persisted', { value: true });
+  win.dispatchEvent(pageshow);
+  await waitForUi(win);
+
+  let passed = false;
+  let detail = '';
+  try {
+    const checked = await test.check(doc, win);
+    if (checked && typeof checked === 'object') {
+      passed = !!checked.passed;
+      detail = checked.detail || '';
+    } else {
+      passed = !!checked;
+    }
+  }
+  catch (error) { errors.push(error.stack || error.message); }
+
+  const singleton = doc.querySelectorAll('.theme-toggle').length === 1;
+  return { passed: passed && errors.length === 0 && singleton, errors, singleton, detail };
+}
+
+function addResult(test, status, detail = '') {
+  const row = document.createElement('tr');
+  row.innerHTML = `<td><code>${test.id}</code></td><td><code>${test.fixture || '全画面'}</code></td><td></td><td class="${status === 'OK' ? 'ok' : status === 'NG' ? 'ng' : 'running'}">${status}</td><td></td>`;
+  row.cells[2].textContent = test.label;
+  row.cells[4].textContent = detail;
+  document.getElementById('results').appendChild(row);
+  return row;
+}
+
+document.getElementById('run').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const results = document.getElementById('results');
+  const summary = document.getElementById('summary');
+  const savedStorage = saveStorage();
+  button.disabled = true;
+  results.replaceChildren();
+  summary.textContent = ' 実行中…';
+
+  let ok = 0;
+  const outcomes = new Map();
+  try {
+    const response = await fetch(SCRIPT_URL, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Userscript読込失敗: HTTP ${response.status}`);
+    const source = await response.text();
+
+    for (const test of TESTS) {
+      const row = addResult(test, '実行中');
+      const outcome = await loadTest(test, source);
+      outcomes.set(test.id, outcome);
+      const status = outcome.passed ? 'OK' : 'NG';
+      row.cells[3].className = outcome.passed ? 'ok' : 'ng';
+      row.cells[3].textContent = status;
+      row.cells[4].textContent = outcome.errors.join(' / ') || outcome.detail || (outcome.singleton ? '' : 'pageshow後にUIが重複');
+      if (outcome.passed) ok++;
+    }
+
+    const partial = ['T-01', 'T-02', 'T-03', 'T-09', 'T-11'].every(id => outcomes.get(id)?.passed);
+    const t14 = { id: 'T-14', fixture: '一覧4種', label: 'お気に入り・NGのタイトル部分一致' };
+    addResult(t14, partial ? 'OK' : 'NG', partial ? '' : '関連する一覧テストに失敗');
+    if (partial) ok++;
+
+    const stable = Array.from(outcomes.values()).every(value => value.errors.length === 0 && value.singleton);
+    const t15 = { id: 'T-15', fixture: '全画面', label: '例外なし・pageshow後も二重初期化なし' };
+    addResult(t15, stable ? 'OK' : 'NG', stable ? '' : '例外またはUI重複を検出');
+    if (stable) ok++;
+
+    const total = TESTS.length + 2;
+    summary.textContent = ` ${ok}/${total} 件 OK`;
+    summary.className = ok === total ? 'ok' : 'ng';
+  } catch (error) {
+    summary.textContent = ` 実行失敗: ${error.message}`;
+    summary.className = 'ng';
+  } finally {
+    restoreStorage(savedStorage);
+    button.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
