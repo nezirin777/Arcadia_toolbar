@@ -455,6 +455,11 @@ const StorageManager = (() => {
     localStorage.removeItem(KEYS.styleBar);
   }
 
+  /** ネイティブstorageイベントがこのオリジンのlocalStorage由来か判定する */
+  function isLocalStorageEvent(event) {
+    return event?.storageArea === localStorage;
+  }
+
   return Object.freeze({
     KEYS,
     getConfig,
@@ -468,6 +473,7 @@ const StorageManager = (() => {
     getStyleBarSettings,
     saveStyleBarSettings,
     removeStyleBarSettings,
+    isLocalStorageEvent,
   });
 })();
 
@@ -536,6 +542,20 @@ const EventBus = (() => {
       // StorageManager発の互換イベントは、新イベントですでに中継済み。
       if (e.arcadiaStorageManagerNotified) return;
       emit('arcadia:favorites-updated', {});
+    });
+    // 別タブでのlocalStorage更新はCustomEventが届かないため、
+    // ネイティブstorageイベントから必要な内部通知だけを補う。
+    // StorageManager.setTheme()が同一タブ向けに発火する互換イベントは
+    // storageAreaがnullなので、ここでは再中継しない。
+    window.addEventListener('storage', e => {
+      if (!StorageManager.isLocalStorageEvent(e)) return;
+      const cleared = e.key === null;
+      if (cleared || e.key === StorageManager.KEYS.favorites) {
+        emit('arcadia:favorites-updated', { external: true });
+      }
+      if (cleared || e.key === StorageManager.KEYS.theme) {
+        emit('arcadia:theme-updated', { theme: StorageManager.getTheme(), external: true });
+      }
     });
   }
 
@@ -1273,6 +1293,13 @@ class ThemeManager {
   #current;
   #button = null;
 
+  #onThemeUpdated = data => {
+    const theme = data?.theme;
+    if (!ThemeManager.#STATES[theme] || theme === this.#current) return;
+    this.#current = theme;
+    this.#apply(false);
+  };
+
   static #STATES = Object.freeze({
     light: { next: 'dark',  icon: '🌙' },
     dark:  { next: 'light', icon: '☀️' },
@@ -1310,6 +1337,7 @@ class ThemeManager {
 
     // 現在テーマを適用
     this.#apply();
+    EventBus.on('arcadia:theme-updated', this.#onThemeUpdated);
 
     // OS設定変更の監視
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
@@ -3025,6 +3053,14 @@ class FavoritesManager {
     this.favorites = StorageManager.getFavorites(config.favorites);
   }
 
+  #onFavoritesUpdated = data => {
+    if (!data?.external) return;
+    this.favorites = StorageManager.getFavorites(this.#config.favorites);
+    if (this.#searchTerm) this.#search(this.#searchTerm);
+    else this.searchResults = null;
+    FavoritesUIBuilder.refreshList(this);
+  };
+
   #save() { StorageManager.saveFavorites(this.favorites); }
 
   #add(category, title, memo = '') {
@@ -3231,6 +3267,7 @@ class FavoritesManager {
       container.style.display = container.style.display === 'none' ? 'block' : 'none';
     });
     document.body.appendChild(toggleBtn);
+    EventBus.on('arcadia:favorites-updated', this.#onFavoritesUpdated);
     this.#isInitialized = true;
   }
 }

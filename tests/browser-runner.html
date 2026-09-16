@@ -569,6 +569,41 @@ const TESTS = [
         doc.querySelector('#format-wordWrap')?.checked === false;
     },
   },
+  {
+    id: 'T-41', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '別タブのお気に入り変更を一覧と管理画面へ反映',
+    check(doc, win) {
+      doc.querySelector('.fm-toggle-button')?.click();
+      const favorites = {
+        primary: [],
+        secondary: [{ title: '架空作品A', memo: '別タブ更新' }],
+        watching: [],
+        blocked: [],
+      };
+      const newValue = JSON.stringify(favorites);
+      win.localStorage.setItem('arcadia_favorites', newValue);
+      win.dispatchEvent(new win.StorageEvent('storage', {
+        key: 'arcadia_favorites', newValue, storageArea: win.localStorage,
+      }));
+      const row = findRow(doc, '架空作品A');
+      const listText = doc.querySelector('#favorites-list-container')?.textContent || '';
+      return row?.classList.contains('list-favorite-secondary') &&
+        !row.classList.contains('list-favorite-primary') &&
+        listText.includes('架空作品A') && listText.includes('別タブ更新');
+    },
+  },
+  {
+    id: 'T-42', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '別タブのテーマ変更を画面へ反映',
+    check(doc, win) {
+      win.localStorage.setItem('ss-theme', 'dark');
+      win.dispatchEvent(new win.StorageEvent('storage', {
+        key: 'ss-theme', newValue: 'dark', storageArea: win.localStorage,
+      }));
+      return doc.documentElement.dataset.theme === 'dark' &&
+        doc.querySelector('#theme-toggle-button')?.textContent === '☀️';
+    },
+  },
 ];
 
 function saveStorage() {
