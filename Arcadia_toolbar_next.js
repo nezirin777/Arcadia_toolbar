@@ -3104,10 +3104,13 @@ class FavoritesManager {
         }
       }
     }
+    const importedCount = Object.values(result).reduce((total, items) => total + items.length, 0);
+    if (!importedCount) return 0;
     this.favorites = result;
     this.#save();
     this.searchResults = null;
     FavoritesUIBuilder.refreshList(this);
+    return importedCount;
   }
 
   #setupEvents(container) {
@@ -3150,11 +3153,22 @@ class FavoritesManager {
       if (t.matches('#import-favorites')) {
         const ta = container.querySelector('#import-text');
         const ea = container.querySelector('#export-text');
+        const status = container.querySelector('#favorites-copy-status');
         if (!ta) return;
         if (ta.style.display === 'none') {
           if (ea) ea.style.display = 'none';
+          if (status) status.textContent = '';
           ta.style.display = 'block'; ta.focus();
-        } else { this.#import(ta.value.trim()); ta.style.display = 'none'; }
+        } else {
+          const importedCount = this.#import(ta.value);
+          if (!importedCount) {
+            if (status) status.textContent = 'インポート対象が見つからないため、既存のお気に入りは変更しません。';
+            ta.focus();
+            return;
+          }
+          ta.style.display = 'none';
+          if (status) status.textContent = `お気に入りを${importedCount}件インポートしました。`;
+        }
         return;
       }
       if (t.matches('.fm-button.remove')) {

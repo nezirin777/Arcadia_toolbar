@@ -353,6 +353,39 @@ const TESTS = [
         doc.documentElement.dataset.theme === 'dark' && localStorage.getItem('ss-theme') === 'dark';
     },
   },
+  {
+    id: 'T-29', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '空のお気に入りインポートで既存データを変更しない',
+    check(doc, win) {
+      doc.querySelector('.fm-toggle-button')?.click();
+      doc.querySelector('#import-favorites')?.click();
+      const ta = doc.querySelector('#import-text');
+      if (!ta) return false;
+      ta.value = '';
+      doc.querySelector('#import-favorites')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_favorites') || '{}');
+      return saved.primary?.some(item => item.title === '架空作品') &&
+        ta.style.display !== 'none' &&
+        doc.querySelector('#favorites-copy-status')?.textContent.includes('変更しません');
+    },
+  },
+  {
+    id: 'T-30', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '有効なお気に入りインポートは解析結果で置換する',
+    check(doc, win) {
+      doc.querySelector('.fm-toggle-button')?.click();
+      doc.querySelector('#import-favorites')?.click();
+      const ta = doc.querySelector('#import-text');
+      if (!ta) return false;
+      ta.value = '# お気に入り一覧\n\n## 最重要お気に入り\n- 新しい架空作品 // 検証メモ\n\n## NGワード\n- 新しいNG';
+      doc.querySelector('#import-favorites')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_favorites') || '{}');
+      return saved.primary?.length === 1 && saved.primary[0]?.title === '新しい架空作品' &&
+        saved.primary[0]?.memo === '検証メモ' && saved.blocked?.[0] === '新しいNG' &&
+        ta.style.display === 'none' &&
+        doc.querySelector('#favorites-copy-status')?.textContent.includes('インポートしました');
+    },
+  },
 ];
 
 function saveStorage() {
