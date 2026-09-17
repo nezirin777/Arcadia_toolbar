@@ -1023,6 +1023,66 @@ const TESTS = [
         latest?.classList.contains('list-favorite-primary');
     },
   },
+  {
+    id: 'T-62', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '機能レジストリの経路選択とライフサイクル破棄順を固定',
+    check(doc, win) {
+      const probe = doc.createElement('script');
+      probe.textContent = `(() => {
+        const enabledConfig = {
+          viewer: { styleBar: true, skipErrorPage: true, fixedIndex: true },
+          board: { searchBar: true },
+        };
+        const disabledConfig = {
+          viewer: { styleBar: false, skipErrorPage: false, fixedIndex: false },
+          board: { searchBar: false },
+        };
+        const ids = (pageType, act, config = enabledConfig) =>
+          selectFeatureDefinitions({ config }, { pageType, act }).map(item => item.id);
+
+        const calls = [];
+        const runtime = new FeatureRuntime();
+        runtime.addCleanup(() => calls.push('cleanup:1'));
+        runtime.start({
+          init() { calls.push('init:a'); },
+          destroy() { calls.push('destroy:a'); },
+        });
+        runtime.addCleanup(() => calls.push('cleanup:2'));
+        runtime.start({
+          init() { calls.push('init:b'); },
+          destroy() { calls.push('destroy:b'); },
+        });
+        runtime.destroy();
+        runtime.destroy();
+
+        window.__featureLifecycleProbe = {
+          ssList: ids('ssList', 'list'),
+          article: ids('ssList', 'dump'),
+          impression: ids('ssList', 'impression'),
+          search: ids('search', '*'),
+          mainList: ids('mainbb', 'list'),
+          disabledArticle: ids('ssList', 'dump', disabledConfig),
+          disabledSearch: ids('search', '*', disabledConfig),
+          unknown: ids(null, '*'),
+          uniqueIds: new Set(FEATURE_REGISTRY.map(item => item.id)).size === FEATURE_REGISTRY.length,
+          calls,
+        };
+      })();`;
+      doc.documentElement.appendChild(probe);
+
+      const result = win.__featureLifecycleProbe;
+      const same = (actual, expected) => JSON.stringify(actual) === JSON.stringify(expected);
+      return same(result?.ssList, ['theme', 'ss-list', 'ss-favorites', 'ss-settings']) &&
+        same(result?.article, ['theme', 'style-bar', 'article-gap', 'index-popup']) &&
+        same(result?.impression, ['theme', 'comment-page', 'impression-form']) &&
+        same(result?.search, ['theme', 'search-bar', 'board-favorites', 'board-settings', 'board-form']) &&
+        same(result?.mainList, ['theme', 'main-list', 'search-bar', 'board-favorites', 'board-settings', 'board-form']) &&
+        same(result?.disabledArticle, ['theme']) &&
+        same(result?.disabledSearch, ['theme', 'board-favorites', 'board-settings', 'board-form']) &&
+        same(result?.unknown, []) && result?.uniqueIds &&
+        same(result?.calls, ['init:a', 'init:b', 'destroy:b', 'destroy:a', 'cleanup:2', 'cleanup:1']);
+    },
+  },
 ];
 
 function saveStorage() {
@@ -1075,6 +1135,11 @@ async function loadTest(test, source) {
   script.textContent = `${source}\n//# sourceURL=Arcadia_toolbar_next.test.js`;
   doc.documentElement.appendChild(script);
   test.afterInject?.(doc, win);
+  await waitForUi(win);
+
+  const pagehide = new win.Event('pagehide');
+  Object.defineProperty(pagehide, 'persisted', { value: true });
+  win.dispatchEvent(pagehide);
   await waitForUi(win);
 
   const pageshow = new win.Event('pageshow');

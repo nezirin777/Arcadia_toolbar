@@ -549,6 +549,7 @@ const EventBus = (() => {
   function on(event, handler) {
     if (!listeners.has(event)) listeners.set(event, new Set());
     listeners.get(event).add(handler);
+    return () => off(event, handler);
   }
 
   /**
@@ -577,16 +578,21 @@ const EventBus = (() => {
    * StorageManager が発火する arcadia:* イベントを自動中継。
    */
   function bridgeWindowEvents() {
+    const bindings = [];
+    const listen = (type, handler) => {
+      window.addEventListener(type, handler);
+      bindings.push([type, handler]);
+    };
     const BRIDGE = [
       'arcadia:config-updated',
       'arcadia:favorites-updated',
       'arcadia:theme-updated',
     ];
     for (const name of BRIDGE) {
-      window.addEventListener(name, e => emit(name, e.detail));
+      listen(name, e => emit(name, e.detail));
     }
     // 旧スクリプト互換イベントも中継
-    window.addEventListener('favorites-updated', e => {
+    listen('favorites-updated', e => {
       // StorageManager発の互換イベントは、新イベントですでに中継済み。
       if (e.arcadiaStorageManagerNotified) return;
       emit('arcadia:favorites-updated', {});
@@ -595,7 +601,7 @@ const EventBus = (() => {
     // ネイティブstorageイベントから必要な内部通知だけを補う。
     // StorageManager.setTheme()が同一タブ向けに発火する互換イベントは
     // storageAreaがnullなので、ここでは再中継しない。
-    window.addEventListener('storage', e => {
+    listen('storage', e => {
       if (!StorageManager.isLocalStorageEvent(e)) return;
       const cleared = e.key === null;
       if (cleared || e.key === StorageManager.KEYS.favorites) {
@@ -605,6 +611,9 @@ const EventBus = (() => {
         emit('arcadia:theme-updated', { theme: StorageManager.getTheme(), external: true });
       }
     });
+    return () => {
+      for (const [type, handler] of bindings) window.removeEventListener(type, handler);
+    };
   }
 
   return Object.freeze({ on, off, emit, bridgeWindowEvents });
@@ -1340,12 +1349,22 @@ class ThemeManager {
   #isInitialized = false;
   #current;
   #button = null;
+  #unsubscribeTheme = null;
+  #mediaQuery = null;
 
   #onThemeUpdated = data => {
     const theme = data?.theme;
     if (!ThemeManager.#STATES[theme] || theme === this.#current) return;
     this.#current = theme;
     this.#apply(false);
+  };
+
+  #onSystemThemeChanged = e => {
+    // ユーザーが手動設定していない場合のみOS設定に従う
+    if (!StorageManager.hasThemePreference()) {
+      this.#current = e.matches ? 'dark' : 'light';
+      this.#apply();
+    }
   };
 
   static #STATES = Object.freeze({
@@ -1385,16 +1404,11 @@ class ThemeManager {
 
     // 現在テーマを適用
     this.#apply();
-    EventBus.on('arcadia:theme-updated', this.#onThemeUpdated);
+    this.#unsubscribeTheme = EventBus.on('arcadia:theme-updated', this.#onThemeUpdated);
 
     // OS設定変更の監視
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-      // ユーザーが手動設定していない場合のみOS設定に従う
-      if (!StorageManager.hasThemePreference()) {
-        this.#current = e.matches ? 'dark' : 'light';
-        this.#apply();
-      }
-    });
+    this.#mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    this.#mediaQuery.addEventListener('change', this.#onSystemThemeChanged);
 
     // トグルボタン生成
     this.#button = el('button', {
@@ -1407,6 +1421,16 @@ class ThemeManager {
     document.body.appendChild(this.#button);
 
     this.#isInitialized = true;
+  }
+
+  destroy() {
+    this.#unsubscribeTheme?.();
+    this.#unsubscribeTheme = null;
+    this.#mediaQuery?.removeEventListener('change', this.#onSystemThemeChanged);
+    this.#mediaQuery = null;
+    this.#button?.remove();
+    this.#button = null;
+    this.#isInitialized = false;
   }
 }
 
@@ -2471,10 +2495,12 @@ class TableRebuilder {
  * -------------------------------------------------- */
 class ListFormatter {
   #isInitialized = false;
+  #isDestroyed = false;
   #config; #pageType; #parser; #favMatcher; #ngMatcher;
   #rebuilder; #renderer; #optimizer; #spamFilter; #domCache; #pageInfo;
   #table = null;
   #renderGeneration = 0;
+  #unsubscribeFavorites = null;
 
   constructor(config, pageType, parser, domCache, favMatcher, ngMatcher) {
     this.#config     = config;
@@ -2575,16 +2601,26 @@ class ListFormatter {
     if (!this.#pageInfo.isList) return;
     ensureStyleElement('atb-list', CSS_DEFS.list);
     requestAnimationFrame(() => {
+      if (this.#isDestroyed) return;
       const table = this.#pageType === 'ssList'
         ? this.#rebuilder.rebuildSSList(this.#pageInfo.isCategory18)
         : this.#rebuilder.rebuildMainList();
       if (!table) { console.warn(`[ListFormatter] テーブル再構築失敗 (${this.#pageType})`); return; }
       this.#table = table;
       this.#prepareTable(table);
-      EventBus.on('arcadia:favorites-updated', this.#onFavoritesUpdated);
+      this.#unsubscribeFavorites = EventBus.on('arcadia:favorites-updated', this.#onFavoritesUpdated);
       this.#isInitialized = true;
       this.#renderRows();
     });
+  }
+
+  destroy() {
+    this.#isDestroyed = true;
+    this.#renderGeneration++;
+    this.#unsubscribeFavorites?.();
+    this.#unsubscribeFavorites = null;
+    this.#table = null;
+    this.#isInitialized = false;
   }
 }
 
@@ -3213,6 +3249,9 @@ class FavoritesUIBuilder {
 class FavoritesManager {
   #isInitialized = false;
   #config;
+  #toggleButton = null;
+  #keyDownHandler = null;
+  #unsubscribeFavorites = null;
   favorites     = {};
   searchResults = null;
   #searchTerm   = '';
@@ -3387,11 +3426,12 @@ class FavoritesManager {
 
     container.querySelector('#search-favorites')?.addEventListener('input', e => debouncedSearch(e.target.value));
 
-    document.addEventListener('keydown', e => {
+    this.#keyDownHandler = e => {
       if (e.key === 'Escape' && container.style.display !== 'none' && this.#searchTerm) {
         clearSearch();
       }
-    });
+    };
+    document.addEventListener('keydown', this.#keyDownHandler);
   }
 
   init() {
@@ -3409,8 +3449,20 @@ class FavoritesManager {
       container.style.display = container.style.display === 'none' ? 'block' : 'none';
     });
     document.body.appendChild(toggleBtn);
-    EventBus.on('arcadia:favorites-updated', this.#onFavoritesUpdated);
+    this.#toggleButton = toggleBtn;
+    this.#unsubscribeFavorites = EventBus.on('arcadia:favorites-updated', this.#onFavoritesUpdated);
     this.#isInitialized = true;
+  }
+
+  destroy() {
+    this.#unsubscribeFavorites?.();
+    this.#unsubscribeFavorites = null;
+    if (this.#keyDownHandler) document.removeEventListener('keydown', this.#keyDownHandler);
+    this.#keyDownHandler = null;
+    document.getElementById('favorites-manager')?.remove();
+    this.#toggleButton?.remove();
+    this.#toggleButton = null;
+    this.#isInitialized = false;
   }
 }
 
@@ -3607,41 +3659,118 @@ class SettingsEditor {
  * INITIALIZE
  * ================================================== */
 
-/**
- * boot - 各ページ種別に応じた Feature を起動する
- */
-function boot(ctx) {
-  const { config, parser, domCache, favMatcher, ngMatcher, themeManager } = ctx;
-  const { pageType, act } = RouteManager.detect();
-  if (!pageType) return;
+class FeatureRuntime {
+  #features = [];
+  #cleanups = [];
+  #isDestroyed = false;
 
-  themeManager.init();
-
-  // ---- ssList (/bbs/sst/sst.php) ----
-  if (pageType === 'ssList') {
-    if (act === 'list' || act === 'search') {
-      new ListFormatter(config, 'ssList', parser, domCache, favMatcher, ngMatcher).init();
-      new FavoritesManager(config).init();
-      new SettingsEditor(ctx.configManager).init();
-    }
-    if (act === 'dump' || act === 'all_msg') {
-      if (config.viewer?.styleBar)      new StyleControlBar(config).init();
-      if (config.viewer?.skipErrorPage) new ArticleGapHandler(config, parser).init();
-      if (config.viewer?.fixedIndex)    new IndexPopupHandler().init();
-    }
-    if (act === 'impression') {
-      new CommentPageFormatter(config, parser).init();
-      new FormFiller(config).run();
-    }
+  start(feature, method = 'init') {
+    if (this.#isDestroyed) return;
+    feature[method]();
+    if (typeof feature.destroy === 'function') this.#features.push(feature);
   }
 
-  // ---- search / mainbb ----
-  if (pageType === 'search' || pageType === 'mainbb') {
-    new ListFormatter(config, 'mainList', parser, domCache, favMatcher, ngMatcher).init();
-    if (config.board?.searchBar) new NovelSearchBar(config).init();
-    new FavoritesManager(config).init();
-    new SettingsEditor(ctx.configManager).init();
-    new FormFiller(config).run();
+  addCleanup(cleanup) {
+    if (!this.#isDestroyed && typeof cleanup === 'function') this.#cleanups.push(cleanup);
+  }
+
+  destroy() {
+    if (this.#isDestroyed) return;
+    this.#isDestroyed = true;
+    for (const feature of this.#features.reverse()) {
+      try { feature.destroy(); }
+      catch (e) { console.error('[FeatureRuntime] destroy failed:', e); }
+    }
+    for (const cleanup of this.#cleanups.reverse()) {
+      try { cleanup(); }
+      catch (e) { console.error('[FeatureRuntime] cleanup failed:', e); }
+    }
+    this.#features.length = 0;
+    this.#cleanups.length = 0;
+  }
+}
+
+const FEATURE_REGISTRY = Object.freeze([
+  {
+    id: 'theme',
+    create: ctx => ctx.themeManager,
+  },
+  {
+    id: 'ss-list', pages: ['ssList'], acts: ['list', 'search'],
+    create: ctx => new ListFormatter(
+      ctx.config, 'ssList', ctx.parser, ctx.domCache, ctx.favMatcher, ctx.ngMatcher,
+    ),
+  },
+  {
+    id: 'ss-favorites', pages: ['ssList'], acts: ['list', 'search'],
+    create: ctx => new FavoritesManager(ctx.config),
+  },
+  {
+    id: 'ss-settings', pages: ['ssList'], acts: ['list', 'search'],
+    create: ctx => new SettingsEditor(ctx.configManager),
+  },
+  {
+    id: 'style-bar', pages: ['ssList'], acts: ['dump', 'all_msg'],
+    enabled: ctx => !!ctx.config.viewer?.styleBar,
+    create: ctx => new StyleControlBar(ctx.config),
+  },
+  {
+    id: 'article-gap', pages: ['ssList'], acts: ['dump', 'all_msg'],
+    enabled: ctx => !!ctx.config.viewer?.skipErrorPage,
+    create: ctx => new ArticleGapHandler(ctx.config, ctx.parser),
+  },
+  {
+    id: 'index-popup', pages: ['ssList'], acts: ['dump', 'all_msg'],
+    enabled: ctx => !!ctx.config.viewer?.fixedIndex,
+    create: () => new IndexPopupHandler(),
+  },
+  {
+    id: 'comment-page', pages: ['ssList'], acts: ['impression'],
+    create: ctx => new CommentPageFormatter(ctx.config, ctx.parser),
+  },
+  {
+    id: 'impression-form', pages: ['ssList'], acts: ['impression'], method: 'run',
+    create: ctx => new FormFiller(ctx.config),
+  },
+  {
+    id: 'main-list', pages: ['search', 'mainbb'], acts: ['list', 'search'],
+    create: ctx => new ListFormatter(
+      ctx.config, 'mainList', ctx.parser, ctx.domCache, ctx.favMatcher, ctx.ngMatcher,
+    ),
+  },
+  {
+    id: 'search-bar', pages: ['search', 'mainbb'],
+    enabled: ctx => !!ctx.config.board?.searchBar,
+    create: ctx => new NovelSearchBar(ctx.config),
+  },
+  {
+    id: 'board-favorites', pages: ['search', 'mainbb'],
+    create: ctx => new FavoritesManager(ctx.config),
+  },
+  {
+    id: 'board-settings', pages: ['search', 'mainbb'],
+    create: ctx => new SettingsEditor(ctx.configManager),
+  },
+  {
+    id: 'board-form', pages: ['search', 'mainbb'], method: 'run',
+    create: ctx => new FormFiller(ctx.config),
+  },
+]);
+
+function selectFeatureDefinitions(ctx, route) {
+  if (!route.pageType) return [];
+  return FEATURE_REGISTRY.filter(definition =>
+    (!definition.pages || definition.pages.includes(route.pageType)) &&
+    (!definition.acts || definition.acts.includes(route.act)) &&
+    (!definition.enabled || definition.enabled(ctx, route))
+  );
+}
+
+/** boot - 現在の経路に対応するFeatureを登録順に起動する。 */
+function boot(ctx, runtime) {
+  const route = RouteManager.detect();
+  for (const definition of selectFeatureDefinitions(ctx, route)) {
+    runtime.start(definition.create(ctx, route), definition.method);
   }
 }
 
@@ -3651,7 +3780,8 @@ function boot(ctx) {
 function main() {
   if (RouteManager.handleRedirect()) return;
 
-  EventBus.bridgeWindowEvents();
+  const runtime = new FeatureRuntime();
+  runtime.addCleanup(EventBus.bridgeWindowEvents());
 
   const configManager = new ConfigManager(CONFIG);
   const config        = configManager.load();
@@ -3665,15 +3795,16 @@ function main() {
   favMatcher.load(favorites);
   ngMatcher.load(favorites.blocked);
 
-  EventBus.on('arcadia:favorites-updated', data => {
+  runtime.addCleanup(EventBus.on('arcadia:favorites-updated', data => {
     const updated = data?.favorites ?? StorageManager.getFavorites(config.favorites);
     favMatcher.load(updated);
     ngMatcher.load(updated.blocked);
-  });
+  }));
 
-  boot({ config, parser, domCache, favMatcher, ngMatcher, themeManager, configManager });
+  boot({ config, parser, domCache, favMatcher, ngMatcher, themeManager, configManager }, runtime);
 
   console.info('[ArcadiaToolBarNext] v5.01 boot OK');
+  return runtime;
 }
 
 /* --------------------------------------------------
@@ -3685,11 +3816,12 @@ function main() {
  *   再実行は不要と判断。必要なら flag を外すこと。）
  * -------------------------------------------------- */
 let booted = false;
+let appRuntime = null;
 
 function safeBoot() {
   if (booted) return;
   booted = true;
-  main();
+  appRuntime = main();
 }
 
 if (document.readyState === 'loading') {
@@ -3701,3 +3833,8 @@ if (document.readyState === 'loading') {
 window.addEventListener('pageshow', e => {
   if (e.persisted) safeBoot();
 }, { once: true });
+
+window.addEventListener('pagehide', e => {
+  // bfcacheへ退避される場合は同じDOMと購読を復帰後も使う。
+  if (!e.persisted) appRuntime?.destroy();
+});
