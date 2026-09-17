@@ -1756,6 +1756,30 @@ class CommentRenderer {
     }
   }
 
+  /** 先頭の旧ページネーションだけを除去し、感想本文内のリンクは保持する */
+  removeLegacyPaginationLinks(td, articleId) {
+    const candidates = [];
+    for (const node of td.childNodes) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (node.matches('hr')) break;
+      if (node.matches('a[href]')) candidates.push(node);
+      candidates.push(...node.querySelectorAll('a[href]'));
+    }
+
+    for (const link of candidates) {
+      try {
+        const url = new URL(link.getAttribute('href'), location.href);
+        if (url.origin === location.origin &&
+            url.pathname === location.pathname &&
+            url.searchParams.get('act') === 'impression' &&
+            url.searchParams.get('no') === articleId &&
+            url.searchParams.has('page')) {
+          link.remove();
+        }
+      } catch { /* 不正URLは本文リンクとして保持 */ }
+    }
+  }
+
   /**
    * ページネーション table 要素を生成して返す。
    * @param {object} opts
@@ -1885,8 +1909,7 @@ class CommentPageFormatter {
             ).find(f => f.querySelector('input[name="act"]')?.value === 'write_impression');
 
             if (writeForm) {
-              // 既存の page リンクを削除
-              td.querySelectorAll('a[href*="page"]').forEach(a => a.remove());
+              this.#renderer.removeLegacyPaginationLinks(td, articleId);
               td.insertBefore(pagination.cloneNode(true), writeForm);
             }
 

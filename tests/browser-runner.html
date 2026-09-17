@@ -782,6 +782,14 @@ const TESTS = [
         saved.primary[0]?.memo === 'メモ // 後半';
     },
   },
+  {
+    id: 'T-53', fixture: 'impression.html', route: '/bbs/sst/sst.php?act=impression&cate=all&no=10001&page=1',
+    label: '感想本文内のpage付きリンクを削除しない',
+    check(doc) {
+      const link = doc.querySelector('#comment-page-link');
+      return link?.textContent === '参考ページ' && link.href === 'https://example.test/reference?page=2';
+    },
+  },
 ];
 
 function saveStorage() {
