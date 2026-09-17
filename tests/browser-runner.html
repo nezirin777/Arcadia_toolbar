@@ -805,6 +805,24 @@ const TESTS = [
       return firstOpen && closed && reopened;
     },
   },
+  {
+    id: 'T-55', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=1&page=1',
+    label: 'Escapeでお気に入り検索の表示状態も解除する',
+    async check(doc, win) {
+      doc.querySelector('.fm-toggle-button')?.click();
+      const search = doc.querySelector('#search-favorites');
+      const clear = doc.querySelector('#clear-search');
+      if (!search || !clear) return false;
+      search.value = '架空作品';
+      search.dispatchEvent(new win.Event('input', { bubbles: true }));
+      await new Promise(resolve => win.setTimeout(resolve, 350));
+      const searchWasActive = search.classList.contains('active') && clear.style.display !== 'none';
+      doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      const listText = doc.querySelector('#favorites-list-container')?.textContent || '';
+      return searchWasActive && search.value === '' && !search.classList.contains('active') &&
+        clear.style.display === 'none' && listText.includes('年齢制限用');
+    },
+  },
 ];
 
 function saveStorage() {

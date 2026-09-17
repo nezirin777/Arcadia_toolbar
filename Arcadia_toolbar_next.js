@@ -3229,6 +3229,19 @@ class FavoritesManager {
   }
 
   #setupEvents(container) {
+    const clearSearch = () => {
+      const inp = container.querySelector('#search-favorites');
+      const clrBtn = container.querySelector('#clear-search');
+      if (inp) {
+        inp.value = '';
+        inp.classList.remove('active');
+      }
+      if (clrBtn) clrBtn.style.display = 'none';
+      this.searchResults = null;
+      this.#searchTerm = '';
+      FavoritesUIBuilder.refreshList(this);
+    };
+
     const debouncedSearch = debounce(term => {
       this.#search(term);
       FavoritesUIBuilder.refreshList(this);
@@ -3256,12 +3269,7 @@ class FavoritesManager {
         return;
       }
       if (t.matches('#clear-search')) {
-        const inp = container.querySelector('#search-favorites');
-        if (inp) inp.value = '';
-        this.searchResults = null; this.#searchTerm = '';
-        t.style.display = 'none';
-        container.querySelector('#search-favorites')?.classList.remove('active');
-        FavoritesUIBuilder.refreshList(this);
+        clearSearch();
         return;
       }
       if (t.matches('#export-favorites')) { void this.#export(); return; }
@@ -3300,10 +3308,7 @@ class FavoritesManager {
 
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && container.style.display !== 'none' && this.#searchTerm) {
-        const inp = container.querySelector('#search-favorites');
-        if (inp) inp.value = '';
-        this.searchResults = null; this.#searchTerm = '';
-        FavoritesUIBuilder.refreshList(this);
+        clearSearch();
       }
     });
   }
