@@ -2625,56 +2625,27 @@ class ListFormatter {
 }
 
 /* --------------------------------------------------
- * StyleControlBar
- * --------------------------------------------------
- * 記事閲覧ページのスタイル変更バー。
- * orchestration + DOM構築 + 設定保存を担当。
+ * ArticleContentFormatter / StyleBarState
  * -------------------------------------------------- */
-class StyleControlBar {
-  #isInitialized = false;
-  #config;
-  #currentTheme;
-  #defaults;
-  #observer;
+const STYLE_BAR_STYLE_KEYS = Object.freeze([
+  'width', 'lineHeight', 'fontSize', 'fontFamily', 'color', 'backgroundColor',
+]);
+const STYLE_BAR_FORMAT_KEYS = Object.freeze([
+  'spacing', 'indent', 'linebreak', 'wordWrap', 'insertspace',
+]);
+
+/** SS本文の原文を保持し、選択された整形だけを一方向に適用する。 */
+class ArticleContentFormatter {
+  static #PRESERVE_BREAK = Symbol('preserveBreak');
+  #content;
   #originalContent = null;
 
-  static #STYLE_MAP = Object.freeze({
-    width:           { prop: 'width',           selector: 'table.brdr' },
-    lineHeight:      { prop: 'line-height',      selector: 'td.bgc' },
-    fontSize:        { prop: 'font-size',        selector: 'td.bgc' },
-    fontFamily:      { prop: 'font-family',      selector: 'td.bgc' },
-    color:           { prop: 'color',            selector: 'td.bgc' },
-    backgroundColor: { prop: 'background-color', selector: '.brdr td.bgc' },
-  });
-
-  static #FORMAT_KEYS = Object.freeze(['spacing', 'indent', 'linebreak', 'wordWrap', 'insertspace']);
-  static #PRESERVE_BREAK = Symbol('preserveBreak');
-
-  constructor(config) {
-    this.#config       = config;
-    this.#currentTheme = StorageManager.getTheme();
-    this.#defaults     = this.#buildDefaults();
-  }
-
-  #buildDefaults() {
-    const theme = this.#config.style.themes[this.#currentTheme] || {};
-    return {
-      width:           this.#config.style.width,
-      lineHeight:      this.#config.style.lineHeight,
-      fontSize:        this.#config.style.fontSize,
-      fontFamily:      this.#config.style.fontFamily,
-      color:           theme.color           || '#000000',
-      backgroundColor: theme.backgroundColor || '#FFF7D4',
-    };
-  }
-
-  #applyStyle(key, value) {
-    const map = StyleControlBar.#STYLE_MAP[key];
-    if (!map) return;
-    const isColor = ['color', 'backgroundColor'].includes(key);
-    document.querySelectorAll(map.selector).forEach(e => {
-      if (isColor && value === this.#defaults[key]) e.style.removeProperty(map.prop);
-      else e.style.setProperty(map.prop, value, 'important');
+  constructor(content) {
+    this.#content = content;
+    if (!content) return;
+    this.#originalContent = document.createDocumentFragment();
+    Array.from(content.childNodes).forEach(node => {
+      this.#originalContent.append(node.cloneNode(true));
     });
   }
 
@@ -2703,7 +2674,7 @@ class StyleControlBar {
 
         if (breakCount >= 3) {
           const first = sequence[0];
-          first[StyleControlBar.#PRESERVE_BREAK] = true;
+          first[ArticleContentFormatter.#PRESERVE_BREAK] = true;
           first.after(document.createElement('br'));
           sequence.slice(1).forEach(item => item.remove());
           node = first.nextSibling?.nextSibling || null;
@@ -2729,7 +2700,7 @@ class StyleControlBar {
   #formatLinebreak(root) {
     const excluded = new Set(Array.from('。., 」"\'》』)）】≫＞>｣…―・！？!?'));
     root.querySelectorAll('br').forEach(br => {
-      if (br[StyleControlBar.#PRESERVE_BREAK]) return;
+      if (br[ArticleContentFormatter.#PRESERVE_BREAK]) return;
       const text = br.previousSibling;
       if (text?.nodeType !== Node.TEXT_NODE) return;
       const chars = Array.from(text.data);
@@ -2789,61 +2760,179 @@ class StyleControlBar {
     }
   }
 
-  // 元のDOM複製へ設定を一方向に適用し、HTML文字列の再解析を避ける。
-  #applyFormats() {
-    const content = document.querySelector('blockquote');
-    if (!content || this.#originalContent === null) return;
-
-    const bar = document.getElementById('style-control-bar');
-    if (!bar) return;
-
+  apply(formats) {
+    if (!this.#content || this.#originalContent === null) return;
     const nextContent = this.#originalContent.cloneNode(true);
-    const saved = StorageManager.getStyleBarSettings();
-    for (const key of StyleControlBar.#FORMAT_KEYS) {
-      const cb = bar.querySelector(`#format-${key}`);
-      const enabled = cb ? cb.checked : (saved ? !!saved.formats?.[key] : !!this.#config.autoExecute[key]);
-      if (enabled) this.#applyFormat(nextContent, key);
+    for (const key of STYLE_BAR_FORMAT_KEYS) {
+      if (formats[key]) this.#applyFormat(nextContent, key);
     }
-    content.replaceChildren(nextContent);
+    this.#content.replaceChildren(nextContent);
+  }
+}
+
+/** 体裁バーの既定値、保存値検証、テーマ追従を管理する。 */
+class StyleBarState {
+  #config;
+  #currentTheme;
+  #defaults;
+
+  constructor(config) {
+    this.#config = config;
+    this.#currentTheme = StorageManager.getTheme();
+    this.#defaults = this.#buildDefaults();
+  }
+
+  get currentTheme() { return this.#currentTheme; }
+  get defaults() { return this.#defaults; }
+
+  get defaultFormats() {
+    return Object.fromEntries(
+      STYLE_BAR_FORMAT_KEYS.map(key => [key, !!this.#config.autoExecute[key]]),
+    );
+  }
+
+  #buildDefaults() {
+    const theme = this.#config.style.themes[this.#currentTheme] || {};
+    return Object.freeze({
+      width:           this.#config.style.width,
+      lineHeight:      this.#config.style.lineHeight,
+      fontSize:        this.#config.style.fontSize,
+      fontFamily:      this.#config.style.fontFamily,
+      color:           theme.color           || '#000000',
+      backgroundColor: theme.backgroundColor || '#FFF7D4',
+    });
+  }
+
+  refreshTheme() {
+    const nextTheme = StorageManager.getTheme();
+    if (nextTheme === this.#currentTheme) return false;
+    this.#currentTheme = nextTheme;
+    this.#defaults = this.#buildDefaults();
+    return true;
+  }
+
+  load(allowedStyles) {
+    const saved = StorageManager.getStyleBarSettings();
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return null;
+    const rawStyles = saved.styles && typeof saved.styles === 'object' && !Array.isArray(saved.styles)
+      ? saved.styles : {};
+    const rawFormats = saved.formats && typeof saved.formats === 'object' && !Array.isArray(saved.formats)
+      ? saved.formats : {};
+    const themeChanged = saved.theme !== this.#currentTheme;
+
+    const styles = {};
+    for (const key of STYLE_BAR_STYLE_KEYS) {
+      const rawValue = themeChanged && ['color', 'backgroundColor'].includes(key)
+        ? 'standard' : rawStyles[key];
+      styles[key] = typeof rawValue === 'string' && allowedStyles[key]?.has(rawValue)
+        ? rawValue : 'standard';
+    }
+
+    const formats = this.defaultFormats;
+    for (const key of STYLE_BAR_FORMAT_KEYS) {
+      if (typeof rawFormats[key] === 'boolean') formats[key] = rawFormats[key];
+    }
+    return { styles, formats };
+  }
+
+  save(styles, formats) {
+    StorageManager.saveStyleBarSettings({
+      styles,
+      formats,
+      theme: this.#currentTheme,
+    });
+  }
+
+  reset() {
+    StorageManager.removeStyleBarSettings();
+  }
+}
+
+/* --------------------------------------------------
+ * StyleControlBar
+ * --------------------------------------------------
+ * 記事閲覧ページのスタイル変更バー。
+ * UI構築と、本文変換・保存状態の調整を担当。
+ * -------------------------------------------------- */
+class StyleControlBar {
+  #isInitialized = false;
+  #isDestroyed = false;
+  #config;
+  #state;
+  #formatter = null;
+  #observer;
+  #bar = null;
+  #switch = null;
+  #initRaf = 0;
+
+  static #STYLE_MAP = Object.freeze({
+    width:           { prop: 'width',           selector: 'table.brdr' },
+    lineHeight:      { prop: 'line-height',      selector: 'td.bgc' },
+    fontSize:        { prop: 'font-size',        selector: 'td.bgc' },
+    fontFamily:      { prop: 'font-family',      selector: 'td.bgc' },
+    color:           { prop: 'color',            selector: 'td.bgc' },
+    backgroundColor: { prop: 'background-color', selector: '.brdr td.bgc' },
+  });
+
+  constructor(config) {
+    this.#config = config;
+    this.#state = new StyleBarState(config);
+  }
+
+  #applyStyle(key, value) {
+    const map = StyleControlBar.#STYLE_MAP[key];
+    if (!map) return;
+    const isColor = ['color', 'backgroundColor'].includes(key);
+    document.querySelectorAll(map.selector).forEach(e => {
+      if (isColor && value === this.#state.defaults[key]) e.style.removeProperty(map.prop);
+      else e.style.setProperty(map.prop, value, 'important');
+    });
+  }
+
+  #applyFormats() {
+    if (!this.#bar || !this.#formatter) return;
+    const formats = Object.fromEntries(STYLE_BAR_FORMAT_KEYS.map(key => [
+      key,
+      !!this.#bar.querySelector(`#format-${key}`)?.checked,
+    ]));
+    this.#formatter.apply(formats);
   }
 
   #saveSettings() {
-    const bar = document.getElementById('style-control-bar');
-    if (!bar) return;
-    const s = { styles: {}, formats: {}, theme: this.#currentTheme };
-    bar.querySelectorAll('select[id^="style-"]').forEach(sel => { s.styles[sel.id.replace('style-', '')] = sel.value; });
-    bar.querySelectorAll('input[id^="format-"]').forEach(cb  => { s.formats[cb.id.replace('format-', '')] = cb.checked; });
-    StorageManager.saveStyleBarSettings(s);
+    if (!this.#bar) return;
+    const styles = {};
+    const formats = {};
+    this.#bar.querySelectorAll('select[id^="style-"]').forEach(sel => {
+      styles[sel.id.replace('style-', '')] = sel.value;
+    });
+    this.#bar.querySelectorAll('input[id^="format-"]').forEach(cb => {
+      formats[cb.id.replace('format-', '')] = cb.checked;
+    });
+    this.#state.save(styles, formats);
   }
 
   #loadSettings() {
-    const saved = StorageManager.getStyleBarSettings();
-    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return false;
+    if (!this.#bar) return false;
+    const allowedStyles = Object.fromEntries(STYLE_BAR_STYLE_KEYS.map(key => [
+      key,
+      new Set(Array.from(this.#bar.querySelector(`#style-${key}`)?.options || [], option => option.value)),
+    ]));
+    const settings = this.#state.load(allowedStyles);
+    if (!settings) return false;
 
-    const styles = saved.styles && typeof saved.styles === 'object' && !Array.isArray(saved.styles)
-      ? saved.styles : {};
-    const formats = saved.formats && typeof saved.formats === 'object' && !Array.isArray(saved.formats)
-      ? saved.formats : {};
-    const themeChanged = saved.theme !== this.#currentTheme;
-    const bar = document.getElementById('style-control-bar');
-    if (!bar) return false;
-
-    Object.keys(StyleControlBar.#STYLE_MAP).forEach(key => {
-      const sel = bar.querySelector(`#style-${key}`);
-      if (!sel) return;
-      const savedValue = themeChanged && ['color', 'backgroundColor'].includes(key)
-        ? 'standard' : styles[key];
-      const value = typeof savedValue === 'string' && Array.from(sel.options).some(o => o.value === savedValue)
-        ? savedValue : 'standard';
+    for (const key of STYLE_BAR_STYLE_KEYS) {
+      const sel = this.#bar.querySelector(`#style-${key}`);
+      if (!sel) continue;
+      const value = settings.styles[key];
       sel.value = value;
-      this.#applyStyle(key, value === 'standard' ? this.#defaults[key] : value);
-      sel.options[0].textContent = `[標準: ${this.#defaults[key]}]`;
-    });
+      this.#applyStyle(key, value === 'standard' ? this.#state.defaults[key] : value);
+      sel.options[0].textContent = `[標準: ${this.#state.defaults[key]}]`;
+    }
 
-    StyleControlBar.#FORMAT_KEYS.forEach(key => {
-      const cb = bar.querySelector(`#format-${key}`);
-      if (cb && typeof formats[key] === 'boolean') cb.checked = formats[key];
-    });
+    for (const key of STYLE_BAR_FORMAT_KEYS) {
+      const cb = this.#bar.querySelector(`#format-${key}`);
+      if (cb) cb.checked = settings.formats[key];
+    }
     this.#applyFormats();
     return true;
   }
@@ -2877,7 +2966,7 @@ class StyleControlBar {
   }
 
   #buildBar() {
-    const d = this.#defaults;
+    const d = this.#state.defaults;
     const COLOR_OPTS = [
       { value: '#000000', label: '黒',   style: { color: '#000000' } },
       { value: '#333333', label: '濃灰', style: { color: '#333333' } },
@@ -2916,7 +3005,7 @@ class StyleControlBar {
       { value: 'ＭＳ Ｐゴシック',            label: 'ＭＳ Ｐゴシック' },
       { value: 'ＭＳ Ｐ明朝',              label: 'ＭＳ Ｐ明朝' },
     ];
-    const ae  = this.#config.autoExecute;
+    const ae  = this.#state.defaultFormats;
     const bar = el('div', { id: 'style-control-bar', class: 'bar_bas' });
     bar.append(
       this.#buildSelect('style-width',          '横幅',       this.#pctOptions(60, 5, 9),   d.width),
@@ -2943,7 +3032,7 @@ class StyleControlBar {
       const t = e.target;
       if (t.matches('select')) {
         const key = t.id.replace('style-', '');
-        this.#applyStyle(key, t.value === 'standard' ? this.#defaults[key] : t.value);
+        this.#applyStyle(key, t.value === 'standard' ? this.#state.defaults[key] : t.value);
       } else if (t.matches('input[type="checkbox"]')) {
         this.#applyFormats();
       }
@@ -2954,15 +3043,16 @@ class StyleControlBar {
       bar.querySelectorAll('select').forEach(sel => {
         sel.selectedIndex = 0;
         const key = sel.id.replace('style-', '');
-        sel.options[0].textContent = `標準: ${this.#defaults[key]}`;
-        this.#applyStyle(key, this.#defaults[key]);
+        sel.options[0].textContent = `標準: ${this.#state.defaults[key]}`;
+        this.#applyStyle(key, this.#state.defaults[key]);
       });
+      const defaults = this.#state.defaultFormats;
       bar.querySelectorAll('input[type="checkbox"]').forEach(cb => {
         const key = cb.id.replace('format-', '');
-        cb.checked = !!this.#config.autoExecute[key];
+        cb.checked = defaults[key];
       });
       this.#applyFormats();
-      StorageManager.removeStyleBarSettings();
+      this.#state.reset();
     });
     swh.addEventListener('click', () => {
       const open = bar.style.display === 'block';
@@ -2970,15 +3060,12 @@ class StyleControlBar {
       swh.textContent   = open ? '開く' : '閉じる';
     });
     this.#observer = new MutationObserver(() => {
-      const newTheme = StorageManager.getTheme();
-      if (newTheme === this.#currentTheme) return;
-      this.#currentTheme = newTheme;
-      this.#defaults = this.#buildDefaults();
+      if (!this.#state.refreshTheme()) return;
       ['color', 'backgroundColor'].forEach(key => {
         const sel = bar.querySelector(`#style-${key}`);
         if (!sel) return;
-        sel.options[0].textContent = `[標準: ${this.#defaults[key]}]`;
-        if (sel.value === 'standard') this.#applyStyle(key, this.#defaults[key]);
+        sel.options[0].textContent = `[標準: ${this.#state.defaults[key]}]`;
+        if (sel.value === 'standard') this.#applyStyle(key, this.#state.defaults[key]);
       });
       this.#saveSettings();
     });
@@ -2989,29 +3076,41 @@ class StyleControlBar {
     if (this.#isInitialized || !this.#config.viewer?.styleBar) return;
 
     // 初期化時のDOMを複製し、設定変更のたびに同じ原文から整形し直す。
-    const content = document.querySelector('blockquote');
-    if (content) {
-      this.#originalContent = document.createDocumentFragment();
-      Array.from(content.childNodes).forEach(node => this.#originalContent.append(node.cloneNode(true)));
-    }
+    this.#formatter = new ArticleContentFormatter(document.querySelector('blockquote'));
 
     ensureStyleElement('atb-style-bar', CSS_DEFS.styleBar);
-    requestAnimationFrame(() => {
+    this.#initRaf = requestAnimationFrame(() => {
+      this.#initRaf = 0;
+      if (this.#isDestroyed) return;
       const swh = el('div', { class: 'bar_swh', text: '開く' });
       const bar = this.#buildBar();
+      this.#switch = swh;
+      this.#bar = bar;
       document.body.appendChild(swh);
       document.body.appendChild(bar);
       this.#setupEvents(bar, swh);
       const loaded = this.#loadSettings();
       if (!loaded) {
         this.#applyFormats();
-        Object.entries(this.#defaults).forEach(([key, val]) => this.#applyStyle(key, val));
+        Object.entries(this.#state.defaults).forEach(([key, val]) => this.#applyStyle(key, val));
       }
       this.#isInitialized = true;
     });
   }
 
-  destroy() { this.#observer?.disconnect(); }
+  destroy() {
+    this.#isDestroyed = true;
+    if (this.#initRaf) cancelAnimationFrame(this.#initRaf);
+    this.#initRaf = 0;
+    this.#observer?.disconnect();
+    this.#observer = null;
+    this.#bar?.remove();
+    this.#switch?.remove();
+    this.#bar = null;
+    this.#switch = null;
+    this.#formatter = null;
+    this.#isInitialized = false;
+  }
 }
 
 /* --------------------------------------------------

@@ -1083,6 +1083,60 @@ const TESTS = [
         same(result?.calls, ['init:a', 'init:b', 'destroy:b', 'destroy:a', 'cleanup:2', 'cleanup:1']);
     },
   },
+  {
+    id: 'T-63', fixture: 'ss-article-formatting.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10002&n=0&count=1',
+    label: '本文変換と体裁バー状態をUIから独立して利用',
+    check(doc, win) {
+      const probe = doc.createElement('script');
+      probe.textContent = `(() => {
+        const content = document.createElement('div');
+        content.append(
+          document.createTextNode('途中'),
+          document.createElement('br'),
+          document.createTextNode('継続'),
+        );
+        const formatter = new ArticleContentFormatter(content);
+        formatter.apply({ linebreak: true });
+        const formatted = content.textContent === '途中継続' && content.querySelectorAll('br').length === 0;
+        formatter.apply({});
+        const restored = content.textContent === '途中継続' && content.querySelectorAll('br').length === 1;
+
+        const storageKey = 'style-control-bar-settings';
+        const previous = localStorage.getItem(storageKey);
+        const state = new StyleBarState(CONFIG);
+        const raw = JSON.stringify({
+          styles: { width: '85%', lineHeight: 'invalid' },
+          formats: { spacing: false, wordWrap: 'false' },
+          theme: state.currentTheme,
+        });
+        localStorage.setItem(storageKey, raw);
+        const allowedStyles = Object.fromEntries(STYLE_BAR_STYLE_KEYS.map(key => [
+          key,
+          new Set(key === 'width' ? ['standard', '85%'] : ['standard']),
+        ]));
+        const settings = state.load(allowedStyles);
+        const readOnly = localStorage.getItem(storageKey) === raw;
+        if (previous === null) localStorage.removeItem(storageKey);
+        else localStorage.setItem(storageKey, previous);
+
+        window.__styleBarSeparationProbe = {
+          formatted,
+          restored,
+          readOnly,
+          width: settings?.styles.width,
+          lineHeight: settings?.styles.lineHeight,
+          spacing: settings?.formats.spacing,
+          wordWrap: settings?.formats.wordWrap,
+        };
+      })();`;
+      doc.documentElement.appendChild(probe);
+
+      const result = win.__styleBarSeparationProbe;
+      return result?.formatted && result.restored && result.readOnly &&
+        result.width === '85%' && result.lineHeight === 'standard' &&
+        result.spacing === false && result.wordWrap === true;
+    },
+  },
 ];
 
 function saveStorage() {
