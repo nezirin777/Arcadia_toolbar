@@ -2429,7 +2429,8 @@ class ListFormatter {
     if (this.#pageType !== 'ssList') return false;
     const cfg   = this.#config.ssList;
     const isAd  = cfg.hideAdsShort && rowData.articleCount - 1 < cfg.adsThreshold && index > 3;
-    const isLow = cfg.hideLowPv && rowData.pvPerArticle < cfg.pvThreshold;
+    const isLow = !this.#pageInfo.isChiraura &&
+      cfg.hideLowPv && rowData.pvPerArticle < cfg.pvThreshold;
     return isAd || isLow;
   }
 
@@ -2452,7 +2453,7 @@ class ListFormatter {
     if (this.#pageType === 'ssList' && row.classList.contains('bgc')) {
       if (this.#shouldHide(rowData, index)) { row.style.display = 'none'; return; }
       this.#renderer.applyDirectLinks(row, rowData, this.#pageInfo.isChiraura);
-      this.#renderer.applyPvRatio(row, rowData);
+      if (!this.#pageInfo.isChiraura) this.#renderer.applyPvRatio(row, rowData);
     }
   }
 

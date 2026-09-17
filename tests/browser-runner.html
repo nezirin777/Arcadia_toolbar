@@ -672,6 +672,27 @@ const TESTS = [
         saved.primary[0]?.memo === '前半 // 後半';
     },
   },
+  {
+    id: 'T-48', fixture: 'ss-list-chiraura.html', route: '/bbs/sst/sst.php?act=list&cate=tiraura&page=1',
+    label: 'PV列のないチラシの裏で記事数と全話リンクを維持',
+    setupStorage() {
+      const config = JSON.parse(localStorage.getItem('arcadia_config') || '{}');
+      config.ssList = {
+        ...(config.ssList || {}),
+        showPvRatio: true,
+        hideLowPv: true,
+        pvThreshold: 500,
+      };
+      localStorage.setItem('arcadia_config', JSON.stringify(config));
+    },
+    check(doc) {
+      const allMessages = doc.querySelector('a[href*="act=all_msg"]');
+      const row = findRow(doc, '習作の架空作品');
+      return allMessages?.textContent.trim() === '4' &&
+        !doc.querySelector('#sslist_table')?.textContent.includes('0/1記事') &&
+        row?.style.display !== 'none';
+    },
+  },
 ];
 
 function saveStorage() {
