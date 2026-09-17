@@ -975,6 +975,54 @@ const TESTS = [
         parsed.favorites.blocked?.[0] === 'NG語';
     },
   },
+  {
+    id: 'T-61', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '一覧更新世代の切替で古いチャンク処理を中断',
+    afterInject(doc, win) {
+      const probe = doc.createElement('script');
+      probe.textContent = `(() => {
+        const table = document.querySelector('#table');
+        const sourceRow = Array.from(table?.querySelectorAll('tr.bgc') || [])
+          .find(row => row.textContent.includes('架空作品B'));
+        if (!table || !sourceRow) return;
+        for (let index = 0; index < 80; index++) {
+          const row = sourceRow.cloneNode(true);
+          const link = row.querySelector('a[href*="all="]');
+          if (link) {
+            link.textContent = '大量作品' + index;
+            link.href = '/bbs/sst/sst.php?act=dump&cate=all&all=' + (11000 + index) + '&n=0&count=1';
+          }
+          table.tBodies[0].appendChild(row);
+        }
+
+        const originalParse = ArcadiaDOMParser.prototype.parseSSRow;
+        window.__listParseCalls = 0;
+        ArcadiaDOMParser.prototype.parseSSRow = function (...args) {
+          window.__listParseCalls++;
+          return originalParse.apply(this, args);
+        };
+
+        requestAnimationFrame(() => {
+          const favorites = {
+            primary: [{ title: '大量作品79', memo: '最新世代' }],
+            secondary: [], watching: [], blocked: [],
+          };
+          const newValue = JSON.stringify(favorites);
+          localStorage.setItem('arcadia_favorites', newValue);
+          window.dispatchEvent(new StorageEvent('storage', {
+            key: 'arcadia_favorites', newValue, storageArea: localStorage,
+          }));
+        });
+      })();`;
+      doc.documentElement.appendChild(probe);
+    },
+    check(doc, win) {
+      const table = doc.querySelector('#sslist_table');
+      const latest = findRow(doc, '大量作品79');
+      return !!table && win.__listParseCalls === table.rows.length &&
+        latest?.classList.contains('list-favorite-primary');
+    },
+  },
 ];
 
 function saveStorage() {

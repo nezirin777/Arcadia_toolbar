@@ -23,7 +23,7 @@
  *                      throttle / rafChunk / fragment / safeText
  *   CORE MANAGERS    … StorageManager / EventBus / DOMCache
  *   ARCADIA DOM      … ArcadiaDOMParser
- *   MATCHERS         … FavoriteMatcher / NGMatcher
+ *   MATCHERS         … FavoriteMatcher / NGMatcher / SpamFilter
  *   CSS_DEFS         … 全CSSをここに集約（freeze なし・動的追加可）
  *   FEATURES         … ThemeManager / RouteManager /
  *                      NovelSearchBar / ArticleGapHandler /
@@ -31,7 +31,7 @@
  *                      IndexPopupHandler
  *   RENDERERS        … LinkOptimizer / ListRenderer / TableRebuilder
  *   FEATURES (L3)    … ListFormatter / StyleControlBar /
- *                      SpamFilter / FormFiller /
+ *                      FormFiller /
  *                      FavoritesCodec / FavoritesUIBuilder / FavoritesManager /
  *                      ConfigManager / SettingsEditor
  *   INITIALIZE       … boot() / main()
@@ -268,14 +268,19 @@ function throttle(fn, interval) {
  * @param {ArrayLike} items  処理対象
  * @param {Function}  fn     (item, index) => void
  * @param {number}    [size=40]  1チャンクあたりの件数
+ * @param {Function}  [shouldContinue]  継続可否。falseなら残りを処理しない
  * @returns {void}
  */
-function rafChunk(items, fn, size = 40) {
+function rafChunk(items, fn, size = 40, shouldContinue = () => true) {
   let i = 0;
   const n = items.length;
   const tick = () => {
+    if (!shouldContinue()) return;
     const end = Math.min(i + size, n);
-    for (; i < end; i++) fn(items[i], i);
+    for (; i < end; i++) {
+      if (!shouldContinue()) return;
+      fn(items[i], i);
+    }
     if (i < n) requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -2462,24 +2467,26 @@ class TableRebuilder {
  * SS一覧 / メイン一覧ページの orchestration のみ担当。
  * DOM解析→parser / テーブル再構築→TableRebuilder /
  * 行DOM更新→ListRenderer / リンク書き換え→LinkOptimizer /
- * マッチング→FavoriteMatcher / NGMatcher
+ * マッチング→FavoriteMatcher / NGMatcher / SpamFilter
  * -------------------------------------------------- */
 class ListFormatter {
   #isInitialized = false;
   #config; #pageType; #parser; #favMatcher; #ngMatcher;
-  #rebuilder; #renderer; #optimizer; #domCache; #pageInfo;
+  #rebuilder; #renderer; #optimizer; #spamFilter; #domCache; #pageInfo;
+  #table = null;
+  #renderGeneration = 0;
 
-  constructor(config, pageType, parser, favMatcher, ngMatcher) {
+  constructor(config, pageType, parser, domCache, favMatcher, ngMatcher) {
     this.#config     = config;
     this.#pageType   = pageType;
-    this.#domCache   = new DOMCache();
-    // 修正：Parserに同一の DOMCache を注入し、キャッシュ機能を集約
-    this.#parser     = new ArcadiaDOMParser(this.#domCache);
+    this.#parser     = parser;
+    this.#domCache   = domCache;
     this.#favMatcher = favMatcher;
     this.#ngMatcher  = ngMatcher;
     this.#rebuilder  = new TableRebuilder(this.#parser);
     this.#renderer   = new ListRenderer(config, this.#domCache);
     this.#optimizer  = new LinkOptimizer(config.ssList);
+    this.#spamFilter = new SpamFilter(config);
     this.#pageInfo   = this.#detectPageInfo();
   }
 
@@ -2517,28 +2524,50 @@ class ListFormatter {
     const cat = this.#favMatcher.matchCategory(rowData.title);
     this.#renderer.applyFavoriteClass(row, cat === 'blocked' ? null : cat);
 
+    const shouldHideSpam = this.#pageType === 'mainList' &&
+      this.#spamFilter.shouldHide(rowData.title);
+    const shouldHideByListRule = this.#shouldHide(rowData, index);
+    row.style.display = shouldHideSpam || shouldHideByListRule ? 'none' : '';
+    if (shouldHideSpam || shouldHideByListRule) return;
+
     if (this.#pageType === 'ssList' && row.classList.contains('bgc')) {
-      if (this.#shouldHide(rowData, index)) { row.style.display = 'none'; return; }
       this.#renderer.applyDirectLinks(row, rowData, this.#pageInfo.isChiraura);
       if (!this.#pageInfo.isChiraura) this.#renderer.applyPvRatio(row, rowData);
     }
   }
 
-  #postProcess(table) {
+  #prepareTable(table) {
     this.#renderer.appendUnhideButton(table, this.#pageType);
     if (this.#pageType === 'ssList' && this.#pageInfo.isChiraura &&
         this.#pageInfo.isList && this.#config.ssList?.directLinks) {
       this.#renderer.appendImpressionHeader(table);
     }
+    if (this.#pageType === 'ssList') {
+      const outer = document.getElementById('new_sstable');
+      if (outer) this.#optimizer.optimize(outer);
+    }
+  }
+
+  #renderRows(chunked = true) {
+    if (!this.#table) return;
+    const generation = ++this.#renderGeneration;
+    const rows = Array.from(this.#table.rows);
+    this.#domCache.clear();
+    if (!chunked) {
+      rows.forEach((row, index) => this.#processRow(row, index));
+      return;
+    }
+    rafChunk(
+      rows,
+      (row, index) => this.#processRow(row, index),
+      40,
+      () => generation === this.#renderGeneration,
+    );
   }
 
   #onFavoritesUpdated = () => {
-    const table = document.getElementById(
-      this.#pageType === 'ssList' ? 'sslist_table' : 'mainlist_table'
-    );
-    if (!table) return;
-    this.#domCache.clear();
-    Array.from(table.rows).forEach((row, i) => this.#processRow(row, i));
+    // 従来どおりイベント完了時点で反映し、進行中の旧世代だけ中断する。
+    this.#renderRows(false);
   };
 
   init() {
@@ -2550,14 +2579,11 @@ class ListFormatter {
         ? this.#rebuilder.rebuildSSList(this.#pageInfo.isCategory18)
         : this.#rebuilder.rebuildMainList();
       if (!table) { console.warn(`[ListFormatter] テーブル再構築失敗 (${this.#pageType})`); return; }
-      rafChunk(table.rows, (row, i) => this.#processRow(row, i));
-      this.#postProcess(table);
-      if (this.#pageType === 'ssList') {
-        const outer = document.getElementById('new_sstable');
-        if (outer) this.#optimizer.optimize(outer);
-      }
+      this.#table = table;
+      this.#prepareTable(table);
       EventBus.on('arcadia:favorites-updated', this.#onFavoritesUpdated);
       this.#isInitialized = true;
+      this.#renderRows();
     });
   }
 }
@@ -2958,26 +2984,19 @@ class StyleControlBar {
 class SpamFilter {
   static #LONG_ALPHA = /[A-Za-z]{15,}/; // 修正：英字連続の文字条件をより厳しく
   static #URL_ISH    = /(https?:\/\/|www\.)/i;
-  #config;
-  constructor(config) { this.#config = config; }
-  run() {
-    if (!this.#config?.board?.hideSpam) return;
-    const updates = [];
-    document.querySelectorAll('#table tr.bgc').forEach(row => {
-      const link = row.querySelector('a');
-      if (!link) return;
-      const text  = (link.textContent || '').trim();
-      if (!text) return;
-      const alphaCount = (text.match(/[A-Za-z]/g) || []).length;
-      const ratio = alphaCount / Math.max(text.length, 1);
+  #enabled;
+  constructor(config) { this.#enabled = !!config?.board?.hideSpam; }
 
-      // 修正：URL有無を必須要件に加味し、二次創作の英語タイトル誤爆を防ぐ
-      const isSpam = (SpamFilter.#URL_ISH.test(text) && ratio > 0.5) ||
-                     (SpamFilter.#LONG_ALPHA.test(text) && ratio > 0.85);
+  shouldHide(title) {
+    if (!this.#enabled) return false;
+    const text = String(title ?? '').trim();
+    if (!text) return false;
+    const alphaCount = (text.match(/[A-Za-z]/g) || []).length;
+    const ratio = alphaCount / Math.max(text.length, 1);
 
-      if (isSpam) updates.push(() => { row.style.display = 'none'; });
-    });
-    if (updates.length) requestAnimationFrame(() => updates.forEach(fn => fn()));
+    // URLらしさを必須要件に含め、二次創作の英語タイトル誤爆を防ぐ。
+    return (SpamFilter.#URL_ISH.test(text) && ratio > 0.5) ||
+           (SpamFilter.#LONG_ALPHA.test(text) && ratio > 0.85);
   }
 }
 
@@ -3592,7 +3611,7 @@ class SettingsEditor {
  * boot - 各ページ種別に応じた Feature を起動する
  */
 function boot(ctx) {
-  const { config, parser, favMatcher, ngMatcher, themeManager } = ctx;
+  const { config, parser, domCache, favMatcher, ngMatcher, themeManager } = ctx;
   const { pageType, act } = RouteManager.detect();
   if (!pageType) return;
 
@@ -3601,7 +3620,7 @@ function boot(ctx) {
   // ---- ssList (/bbs/sst/sst.php) ----
   if (pageType === 'ssList') {
     if (act === 'list' || act === 'search') {
-      new ListFormatter(config, 'ssList', parser, favMatcher, ngMatcher).init();
+      new ListFormatter(config, 'ssList', parser, domCache, favMatcher, ngMatcher).init();
       new FavoritesManager(config).init();
       new SettingsEditor(ctx.configManager).init();
     }
@@ -3618,11 +3637,10 @@ function boot(ctx) {
 
   // ---- search / mainbb ----
   if (pageType === 'search' || pageType === 'mainbb') {
-    new ListFormatter(config, 'mainList', parser, favMatcher, ngMatcher).init();
+    new ListFormatter(config, 'mainList', parser, domCache, favMatcher, ngMatcher).init();
     if (config.board?.searchBar) new NovelSearchBar(config).init();
     new FavoritesManager(config).init();
     new SettingsEditor(ctx.configManager).init();
-    new SpamFilter(config).run();
     new FormFiller(config).run();
   }
 }
@@ -3653,7 +3671,7 @@ function main() {
     ngMatcher.load(updated.blocked);
   });
 
-  boot({ config, parser, favMatcher, ngMatcher, themeManager, configManager });
+  boot({ config, parser, domCache, favMatcher, ngMatcher, themeManager, configManager });
 
   console.info('[ArcadiaToolBarNext] v5.01 boot OK');
 }
