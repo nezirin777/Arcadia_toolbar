@@ -7,7 +7,7 @@
 // @include      https://www.mai-net.net/bbs/*
 // @include      http://mai-net.ath.cx/bbs/*
 // @include      https://mai-net.ath.cx/bbs/*
-// @version      5.01
+// @version      5.02
 // ==/UserScript==
 
 
@@ -20,7 +20,7 @@
  * 構成概要：
  *   CONFIG           … 既定設定 (deepFreeze)
  *   CORE UTILITIES   … el / ensureStyleElement / debounce /
- *                      throttle / rafChunk / fragment / safeText
+ *                      rafChunk / safeText
  *   CORE MANAGERS    … StorageManager / EventBus / DOMCache
  *   ARCADIA DOM      … ArcadiaDOMParser
  *   MATCHERS         … FavoriteMatcher / NGMatcher / SpamFilter
@@ -30,11 +30,11 @@
  *                      CommentRenderer / CommentPageFormatter /
  *                      IndexPopupHandler
  *   RENDERERS        … LinkOptimizer / ListRenderer / TableRebuilder
- *   FEATURES (L3)    … ListFormatter / StyleControlBar /
- *                      FormFiller /
+ *   FEATURES (L3)    … ListFormatter / ArticleContentFormatter /
+ *                      StyleBarState / StyleControlBar / FormFiller /
  *                      FavoritesCodec / FavoritesUIBuilder / FavoritesManager /
  *                      ConfigManager / SettingsEditor
- *   INITIALIZE       … boot() / main()
+ *   INITIALIZE       … FeatureRuntime / featureRegistry / boot() / main()
  *
  * 設計方針：
  *   - Feature は orchestration / init / event hookup のみ
@@ -247,23 +247,6 @@ function debounce(fn, delay) {
 }
 
 /**
- * throttle - 一定間隔で最大1回だけ関数を呼び出す（先頭実行）
- * @param {Function} fn
- * @param {number} interval  ミリ秒
- * @returns {Function}
- */
-function throttle(fn, interval) {
-  let last = 0;
-  return function (...args) {
-    const now = Date.now();
-    if (now - last >= interval) {
-      last = now;
-      fn.apply(this, args);
-    }
-  };
-}
-
-/**
  * rafChunk - 配列をrAFチャンク処理する
  * @param {ArrayLike} items  処理対象
  * @param {Function}  fn     (item, index) => void
@@ -284,20 +267,6 @@ function rafChunk(items, fn, size = 40, shouldContinue = () => true) {
     if (i < n) requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
-}
-
-/**
- * fragment - DocumentFragmentを生成して子要素を追加するヘルパー
- * @param {...(Node|null|undefined)} children
- * @returns {DocumentFragment}
- */
-function fragment(...children) {
-  const frag = document.createDocumentFragment();
-  for (const c of children.flat()) {
-    if (c == null) continue;
-    frag.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
-  }
-  return frag;
 }
 
 /**
@@ -535,8 +504,6 @@ const StorageManager = (() => {
  *   arcadia:config-updated
  *   arcadia:favorites-updated
  *   arcadia:theme-updated
- *   arcadia:favorites-changed   ← UI操作でお気に入りが変わった
- *   arcadia:list-rebuilt        ← テーブル再構築完了
  * -------------------------------------------------- */
 const EventBus = (() => {
   const listeners = new Map();
@@ -3902,7 +3869,7 @@ function main() {
 
   boot({ config, parser, domCache, favMatcher, ngMatcher, themeManager, configManager }, runtime);
 
-  console.info('[ArcadiaToolBarNext] v5.01 boot OK');
+  console.info('[ArcadiaToolBarNext] v5.02 boot OK');
   return runtime;
 }
 

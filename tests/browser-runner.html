@@ -1179,6 +1179,10 @@ async function loadTest(test, source) {
   test.setupStorage?.();
 
   win.addEventListener('error', event => errors.push(event.message || 'window error'));
+  win.addEventListener('unhandledrejection', event => {
+    const reason = event.reason;
+    errors.push(reason instanceof Error ? reason.message : String(reason ?? 'unhandled rejection'));
+  });
   const originalError = win.console.error.bind(win.console);
   win.console.error = (...args) => {
     errors.push(args.map(String).join(' '));

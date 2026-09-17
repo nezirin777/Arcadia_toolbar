@@ -1,17 +1,16 @@
-// ==UserScript==
-// @name         ArcadiaToolBarNext
-// @namespace    ArcadiaToolBarNext
-// @description  小説の体裁を操作できるバーがＰＯＰしてくれます。(Arcadia専用) - Next構成版
-// @include      http://www.mai-net.net/bbs/*
-// @include      http://mai-net.ath.cx/bbs/*
-// @version      4.00-dev
-// ==/UserScript==
+/*
+ * ArcadiaToolBar 旧版参照ソース
+ *
+ * 現行版との比較・移植確認のために保存しているコードです。
+ * Userscriptのメタデータを持たないため、このファイル単体ではインストールできません。
+ * 利用時は Arcadia_toolbar_next.js だけを登録してください。
+ */
 
 /* ==================================================
- * ArcadiaToolBarNext — 完成版
+ * ArcadiaToolBarNext — 旧版参照用
  * ==================================================
  * 既存 ArcadiaToolBar v3.00 を「仕様書」として参照しながら
- * 新規構造へ移植した Userscript 単体配布版。
+ * 新規構造へ移植した当時の実装。現行配布物ではない。
  *
  * 構成概要：
  *   CONFIG           … 既定設定 (deepFreeze)
@@ -103,8 +102,8 @@ const CONFIG = deepFreeze({
   posting: {
     autoFill: false,
     userInfo: {
-      name: 'ねじりん',
-      tripcode: 'eclipse',
+      name: '',
+      tripcode: '',
       password: '',
     },
   },
@@ -3084,8 +3083,8 @@ class ConfigManager {
         displayName: '投稿設定',
         fields: [{ id: 'autoFill', label: '自動入力', type: 'checkbox', value: false }],
         userInfo: [
-          { id: 'name',     label: '名前',       type: 'text',     value: 'ねじりん' },
-          { id: 'tripcode', label: 'トリップ',   type: 'text',     value: 'eclipse' },
+          { id: 'name',     label: '名前',       type: 'text',     value: '' },
+          { id: 'tripcode', label: 'トリップ',   type: 'text',     value: '' },
           { id: 'password', label: 'パスワード', type: 'password', value: '' },
         ],
       },
