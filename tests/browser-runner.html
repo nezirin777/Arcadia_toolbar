@@ -58,6 +58,10 @@ const TEST_FAVORITES = {
 const findRow = (doc, text) =>
   Array.from(doc.querySelectorAll('tr.bgc')).find(row => row.textContent.includes(text)) || null;
 
+const findSearchTable = (doc, text) =>
+  Array.from(doc.querySelectorAll('table.main-search-result'))
+    .find(table => table.textContent.includes(text)) || null;
+
 const valueOf = (form, name) => form?.querySelector(`[name="${name}"]`)?.value ?? null;
 
 function verify(checks) {
@@ -843,7 +847,8 @@ const TESTS = [
         forms[0]?.action.endsWith('/bbs/sst/sst.php') &&
         forms[1]?.action === 'https://yomou.syosetu.com/search.php' &&
         forms[2]?.action === 'https://syosetu.org/search/' &&
-        forms.every(form => form.querySelector('input[name="word"]')) &&
+        !!forms[0]?.querySelector('input[name="words"]') &&
+        forms.slice(1).every(form => form.querySelector('input[name="word"]')) &&
         emptySubmit.defaultPrevented;
     },
   },
@@ -1137,6 +1142,92 @@ const TESTS = [
         result.spacing === false && result.wordWrap === true;
     },
   },
+  {
+    id: 'T-64', fixture: 'ss-search.html', route: '/bbs/sst/sst.php?act=search&cate=all&words=fixture&page=1',
+    label: '通常SS検索でヘッダーを保持し空のMENU領域を作らない',
+    check(doc) {
+      const table = doc.querySelector('#sslist_table');
+      const headers = Array.from(table?.rows[0]?.cells || []).map(cell => cell.textContent.trim());
+      return verify({
+        table: !!table,
+        headers: JSON.stringify(headers) === JSON.stringify(['元作品', 'タイトル', '投稿者', '記事', '感想', 'PV', '更新']),
+        noEmptyMenu: !doc.querySelector('.ss-menu-cell'),
+        favorite: findRow(doc, '架空作品の検索結果')?.classList.contains('list-favorite-primary'),
+        blocked: findRow(doc, '検索用作品B')?.classList.contains('list-blocked'),
+      });
+    },
+  },
+  {
+    id: 'T-65', fixture: 'ss-search-18.html', route: '/bbs/sst/sst.php?act=search&cate=18&words=fixture&page=1',
+    label: '18禁SS検索でタイトルヘッダーと全列を保持',
+    check(doc) {
+      const table = doc.querySelector('#sslist_table');
+      const headers = Array.from(table?.rows[0]?.cells || []).map(cell => cell.textContent.trim());
+      return verify({
+        table: !!table,
+        headers: JSON.stringify(headers) === JSON.stringify(['タイトル', '投稿者', '記事', '感想', 'PV', '更新']),
+        noEmptyMenu: !doc.querySelector('.ss-menu-cell'),
+        favorite: findRow(doc, '年齢制限用の検索結果')?.classList.contains('list-favorite-primary'),
+      });
+    },
+  },
+  {
+    id: 'T-66', fixture: 'main-search.html', route: '/bbs/mainbbs/mainbbs.php?act=search&cate=all&words=fixture&page=1',
+    label: 'メイン掲示板検索の独立table全件へお気に入りとNGを適用',
+    check(doc) {
+      const tables = doc.querySelectorAll('table.main-search-result');
+      return verify({
+        allResults: tables.length === 3,
+        favorite: findSearchTable(doc, '架空の話題A')?.classList.contains('list-favorite-primary'),
+        blocked: findSearchTable(doc, '架空の質問B')?.classList.contains('list-blocked'),
+        oneUnhideButton: doc.querySelectorAll('#main-search-unhide-button').length === 1,
+        noListWrapper: !doc.querySelector('#new_maintable'),
+      });
+    },
+  },
+  {
+    id: 'T-67', fixture: 'search-board-search.html', route: '/bbs/sss/sss.php?act=search&cate=all&words=fixture&page=1',
+    label: '捜索掲示板検索の全件へお気に入り・NG・スパム判定を適用',
+    setupStorage() {
+      localStorage.setItem('arcadia_config', JSON.stringify({
+        ...TEST_CONFIG,
+        board: { ...TEST_CONFIG.board, hideSpam: true },
+      }));
+    },
+    check(doc) {
+      const spam = findSearchTable(doc, 'https://spam.example/SEARCHRESULT12345');
+      const normal = findSearchTable(doc, 'English Title');
+      return verify({
+        allResults: doc.querySelectorAll('table.main-search-result').length === 4,
+        favorite: findSearchTable(doc, '架空作品を探す検索結果')?.classList.contains('list-favorite-primary'),
+        blocked: findSearchTable(doc, '架空の条件に合う作品')?.classList.contains('list-blocked'),
+        spamHidden: spam?.style.display === 'none',
+        normalVisible: normal?.style.display !== 'none',
+      });
+    },
+  },
+  {
+    id: 'T-68', fixture: 'search-list-18.html', route: '/bbs/sss/sss.php?act=list&cate=18&page=1',
+    label: '18禁捜索一覧の列差をタイトルリンク基準で処理',
+    check(doc) {
+      return verify({
+        table: !!doc.querySelector('#mainlist_table'),
+        favorite: findRow(doc, '年齢制限用の捜索依頼')?.classList.contains('list-favorite-primary'),
+        blocked: findRow(doc, '架空の条件に合う作品')?.classList.contains('list-blocked'),
+      });
+    },
+  },
+  {
+    id: 'T-69', fixture: 'search-board-search-18.html', route: '/bbs/sss/sss.php?act=search&cate=18&words=fixture&page=1',
+    label: '18禁捜索検索の独立table全件へお気に入りとNGを適用',
+    check(doc) {
+      return verify({
+        allResults: doc.querySelectorAll('table.main-search-result').length === 2,
+        favorite: findSearchTable(doc, '年齢制限用の捜索結果')?.classList.contains('list-favorite-primary'),
+        blocked: findSearchTable(doc, '架空の条件に合う作品')?.classList.contains('list-blocked'),
+      });
+    },
+  },
 ];
 
 function saveStorage() {
@@ -1258,8 +1349,9 @@ document.getElementById('run').addEventListener('click', async event => {
       if (outcome.passed) ok++;
     }
 
-    const partial = ['T-01', 'T-02', 'T-03', 'T-09', 'T-11'].every(id => outcomes.get(id)?.passed);
-    const t14 = { id: 'T-14', fixture: '一覧4種', label: 'お気に入り・NGのタイトル部分一致' };
+    const partial = ['T-01', 'T-02', 'T-03', 'T-09', 'T-11', 'T-64', 'T-65', 'T-66', 'T-67', 'T-68', 'T-69']
+      .every(id => outcomes.get(id)?.passed);
+    const t14 = { id: 'T-14', fixture: '一覧・検索結果', label: 'お気に入り・NGのタイトル部分一致' };
     addResult(t14, partial ? 'OK' : 'NG', partial ? '' : '関連する一覧テストに失敗');
     if (partial) ok++;
 

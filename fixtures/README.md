@@ -12,6 +12,8 @@
 | `ss-list.html` | SS投稿掲示板の一覧 |
 | `ss-list-18.html` | 18禁SS掲示板の一覧 |
 | `ss-list-chiraura.html` | チラシの裏の一覧 |
+| `ss-search.html` | SS投稿掲示板の検索結果（MENU列なし） |
+| `ss-search-18.html` | 18禁SS掲示板の検索結果（元作品・MENU列なし） |
 | `ss-article-first.html` | SS単話表示・第1話 |
 | `ss-article-middle.html` | SS単話表示・中間話 |
 | `ss-article-last.html` | SS単話表示・最終話 |
@@ -19,14 +21,19 @@
 | `ss-article-all.html` | SS全話表示 |
 | `impression.html` | 感想ページ |
 | `main-list.html` | メイン掲示板の一覧 |
+| `main-search.html` | メイン掲示板の検索結果（1件1table） |
 | `main-article.html` | メイン掲示板の記事 |
 | `search-list.html` | 捜索掲示板の一覧 |
+| `search-list-18.html` | 18禁捜索掲示板の一覧 |
+| `search-board-search.html` | 捜索掲示板の検索結果（1件1table） |
+| `search-board-search-18.html` | 18禁捜索掲示板の検索結果（1件1table） |
 | `search-article.html` | 捜索掲示板の記事 |
 
 ## 残している互換境界
 
 - 掲示板ごとのtable位置と `id="table"`、`bga`、`bgb`、`bgc`、`brdr` class
-- `sst.php` / `main.php` / `search.php` のURLと `act`、`cate`、`all`、`n` パラメータ
+- `sst.php` / `mainbbs.php` / `sss.php` のURLと `act`、`cate`、`all`、`n`、`words` パラメータ
+- SS検索結果の列差と、メイン・捜索掲示板検索結果の1件1table構造
 - 単話の前話・次話リンクと本文の `blockquote`
 - 感想一覧の入れ子table、`hr`、編集・削除・投稿フォーム
 - 掲示板記事の返信フォーム

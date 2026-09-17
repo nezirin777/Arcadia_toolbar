@@ -7,7 +7,7 @@
 // @include      https://www.mai-net.net/bbs/*
 // @include      http://mai-net.ath.cx/bbs/*
 // @include      https://mai-net.ath.cx/bbs/*
-// @version      5.02
+// @version      5.03
 // ==/UserScript==
 
 
@@ -876,6 +876,24 @@ class ArcadiaDOMParser {
   }
 
   /**
+   * メイン/捜索掲示板の検索結果tableをすべて返す。
+   * 検索結果は一覧の単一tableと異なり、1件ごとに独立したtableで構成される。
+   *
+   * @returns {HTMLTableElement[]}
+   */
+  findMainSearchTables() {
+    return Array.from(document.querySelectorAll('table.brdr')).filter(table =>
+      ['90%', '100%'].includes(table.getAttribute('width')) &&
+      table.cellPadding === '3' &&
+      table.cellSpacing === '1' &&
+      !!this.#query(
+        table,
+        'a[href*="act=dump"][href*="?all="], a[href*="act=dump"][href*="&all="]'
+      )
+    );
+  }
+
+  /**
    * SS一覧テーブルの先頭行から rowspan 付きメニュー td を抜き出す。
    * （既存 #extractRowspanMenuFromSsListTable の移植）
    *
@@ -883,16 +901,17 @@ class ArcadiaDOMParser {
    * @returns {HTMLTableCellElement|null}
    */
   extractMenuCell(listTable) {
-    // ヘッダ行 (tr.bga) の先頭 td を削除
-    const headerRow = this.#query(listTable, 'tr.bga');
-    if (headerRow?.firstElementChild) headerRow.firstElementChild.remove();
-
     // rowspan 付きメニュー td を tr.bgc から探して取り外す
     const firstDataRow = Array.from(listTable.querySelectorAll('tr.bgc')).find(tr => {
       const td = tr.firstElementChild;
       return td && td.tagName === 'TD' && td.hasAttribute('rowspan');
     });
     if (!firstDataRow) return null;
+
+    // 一覧にだけ存在するMENUヘッダを、対応するrowspanセルがある場合に限って削除する。
+    // 検索結果にはMENU列がないため、先頭ヘッダを無条件に消してはいけない。
+    const headerRow = this.#query(listTable, 'tr.bga');
+    if (headerRow?.firstElementChild) headerRow.firstElementChild.remove();
 
     const menuCell = firstDataRow.firstElementChild;
     menuCell.remove();
@@ -1022,6 +1041,7 @@ const CSS_DEFS = {
       .main-main-table    { border-spacing:0; border:0; margin:0 auto; width:80%; }
       .main-list-table-cell { width:100%; padding:0; }
       .mainlist_table     { width:100%; border-spacing:1px; }
+      .main-search-result { position:relative; }
       .bga                { height:30px !important; }
       .ss-list-table, .main-list-table { position:relative; }
       .list-unhide-button {
@@ -1034,6 +1054,7 @@ const CSS_DEFS = {
       }
       .list-unhide-button:hover    { background-color:var(--ss-hover-bg); }
       .list-unhide-button:disabled { opacity:0.6; cursor:not-allowed; }
+      .main-search-unhide-button { position:static; display:block; margin:0 auto 8px; }
       .list-blocked { display:none; }
     }
   `,
@@ -1188,6 +1209,12 @@ const CSS_DEFS = {
     .main-list-table-cell tr.bgc.list-favorite-primary:hover td   { background-color:var(--list-favorite-primary-hover) !important; }
     .main-list-table-cell tr.bgc.list-favorite-secondary:hover td { background-color:var(--list-favorite-secondary-hover) !important; }
     .main-list-table-cell tr.bgc.list-favorite-watching:hover td  { background-color:var(--list-favorite-watching-hover) !important; }
+    .main-search-result.list-favorite-primary > tbody > tr > td,
+    .main-search-result.list-favorite-primary > tbody > tr > td.bgb *   { background-color:var(--list-favorite-primary) !important; }
+    .main-search-result.list-favorite-secondary > tbody > tr > td,
+    .main-search-result.list-favorite-secondary > tbody > tr > td.bgb * { background-color:var(--list-favorite-secondary) !important; }
+    .main-search-result.list-favorite-watching > tbody > tr > td,
+    .main-search-result.list-favorite-watching > tbody > tr > td.bgb *  { background-color:var(--list-favorite-watching) !important; }
     td.bgc { background-color:var(--ss-menu-bg) !important; color:var(--ss-text-color) !important; }
   `,
 
@@ -1470,6 +1497,7 @@ class NovelSearchBar {
     arcadia: {
       action: '/bbs/sst/sst.php',
       buttonText: 'Arcadia内で検索',
+      searchParam: 'words',
       hiddenInputs: [
         { name: 'act', value: 'search' },
         { name: 'page', value: '1' },
@@ -2350,6 +2378,26 @@ class ListRenderer {
     table.appendChild(btn);
   }
 
+  appendSearchUnhideButton(tables) {
+    const firstTable = tables[0];
+    if (!firstTable?.parentNode || document.getElementById('main-search-unhide-button')) return;
+    const btn = el('button', {
+      id: 'main-search-unhide-button',
+      class: 'list-unhide-button main-search-unhide-button',
+      title: 'もう一度不可視にしたい場合はページの再読み込みが必要です',
+      text: '作品不可視化の解除',
+    });
+    btn.addEventListener('click', () => {
+      for (const table of tables) {
+        if (!table.classList.contains('list-blocked')) continue;
+        table.classList.remove('list-blocked');
+        table.style.display = '';
+      }
+      btn.disabled = true;
+    });
+    firstTable.parentNode.insertBefore(btn, firstTable);
+  }
+
   appendImpressionHeader(table) {
     // 修正：DOMCache を活用してテーブル内の先頭行を取得
     const firstRow = this.#domCache.query(table, 'tr:not(.impression-added)');
@@ -2410,7 +2458,8 @@ class TableRebuilder {
     const outer = el('table', { id: 'new_sstable', class: 'ss-main-table' });
     const tbody = document.createElement('tbody');
     const tr    = document.createElement('tr');
-    tr.append(tdMenu, tdList);
+    if (menuCell) tr.appendChild(tdMenu);
+    tr.appendChild(tdList);
     tbody.appendChild(tr);
     outer.appendChild(tbody);
 
@@ -2446,6 +2495,12 @@ class TableRebuilder {
 
     return document.getElementById('mainlist_table');
   }
+
+  prepareMainSearchResults() {
+    const tables = this.#parser.findMainSearchTables();
+    for (const table of tables) table.classList.add('main-search-result');
+    return tables;
+  }
 }
 
 /* ==================================================
@@ -2466,6 +2521,7 @@ class ListFormatter {
   #config; #pageType; #parser; #favMatcher; #ngMatcher;
   #rebuilder; #renderer; #optimizer; #spamFilter; #domCache; #pageInfo;
   #table = null;
+  #searchTables = [];
   #renderGeneration = 0;
   #unsubscribeFavorites = null;
 
@@ -2488,6 +2544,7 @@ class ListFormatter {
     return {
       isCategory18: params.get('cate') === '18',
       isChiraura:   params.get('cate') === 'tiraura',
+      isSearch:     params.get('act') === 'search',
       isList:       params.get('act') === 'list' || params.get('act') === 'search',
     };
   }
@@ -2529,6 +2586,22 @@ class ListFormatter {
     }
   }
 
+  #processSearchTable(table) {
+    const titleRow = Array.from(table.rows).find(row => this.#parser.parseMainRow(row));
+    const rowData = titleRow ? this.#parser.parseMainRow(titleRow) : null;
+    if (!rowData) return;
+
+    this.#renderer.applyBaseStyle(table);
+    if (this.#ngMatcher.isBlocked(rowData.title)) {
+      this.#renderer.applyFavoriteClass(table, 'blocked');
+      return;
+    }
+
+    const cat = this.#favMatcher.matchCategory(rowData.title);
+    this.#renderer.applyFavoriteClass(table, cat === 'blocked' ? null : cat);
+    table.style.display = this.#spamFilter.shouldHide(rowData.title) ? 'none' : '';
+  }
+
   #prepareTable(table) {
     this.#renderer.appendUnhideButton(table, this.#pageType);
     if (this.#pageType === 'ssList' && this.#pageInfo.isChiraura &&
@@ -2542,17 +2615,22 @@ class ListFormatter {
   }
 
   #renderRows(chunked = true) {
-    if (!this.#table) return;
+    if (!this.#table && this.#searchTables.length === 0) return;
     const generation = ++this.#renderGeneration;
-    const rows = Array.from(this.#table.rows);
+    const items = this.#searchTables.length
+      ? this.#searchTables
+      : Array.from(this.#table.rows);
+    const process = this.#searchTables.length
+      ? table => this.#processSearchTable(table)
+      : (row, index) => this.#processRow(row, index);
     this.#domCache.clear();
     if (!chunked) {
-      rows.forEach((row, index) => this.#processRow(row, index));
+      items.forEach(process);
       return;
     }
     rafChunk(
-      rows,
-      (row, index) => this.#processRow(row, index),
+      items,
+      process,
       40,
       () => generation === this.#renderGeneration,
     );
@@ -2569,12 +2647,22 @@ class ListFormatter {
     ensureStyleElement('atb-list', CSS_DEFS.list);
     requestAnimationFrame(() => {
       if (this.#isDestroyed) return;
-      const table = this.#pageType === 'ssList'
-        ? this.#rebuilder.rebuildSSList(this.#pageInfo.isCategory18)
-        : this.#rebuilder.rebuildMainList();
-      if (!table) { console.warn(`[ListFormatter] テーブル再構築失敗 (${this.#pageType})`); return; }
-      this.#table = table;
-      this.#prepareTable(table);
+      if (this.#pageType === 'mainList' && this.#pageInfo.isSearch) {
+        const tables = this.#rebuilder.prepareMainSearchResults();
+        if (tables.length === 0) {
+          console.warn('[ListFormatter] 掲示板検索結果が見つかりません');
+          return;
+        }
+        this.#searchTables = tables;
+        this.#renderer.appendSearchUnhideButton(tables);
+      } else {
+        const table = this.#pageType === 'ssList'
+          ? this.#rebuilder.rebuildSSList(this.#pageInfo.isCategory18)
+          : this.#rebuilder.rebuildMainList();
+        if (!table) { console.warn(`[ListFormatter] テーブル再構築失敗 (${this.#pageType})`); return; }
+        this.#table = table;
+        this.#prepareTable(table);
+      }
       this.#unsubscribeFavorites = EventBus.on('arcadia:favorites-updated', this.#onFavoritesUpdated);
       this.#isInitialized = true;
       this.#renderRows();
@@ -2587,6 +2675,7 @@ class ListFormatter {
     this.#unsubscribeFavorites?.();
     this.#unsubscribeFavorites = null;
     this.#table = null;
+    this.#searchTables = [];
     this.#isInitialized = false;
   }
 }
@@ -3869,7 +3958,7 @@ function main() {
 
   boot({ config, parser, domCache, favMatcher, ngMatcher, themeManager, configManager }, runtime);
 
-  console.info('[ArcadiaToolBarNext] v5.02 boot OK');
+  console.info('[ArcadiaToolBarNext] v5.03 boot OK');
   return runtime;
 }
 
