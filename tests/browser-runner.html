@@ -790,6 +790,21 @@ const TESTS = [
       return link?.textContent === '参考ページ' && link.href === 'https://example.test/reference?page=2';
     },
   },
+  {
+    id: 'T-54', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=1&page=1',
+    label: 'お気に入り管理を初回クリックで表示する',
+    check(doc, win) {
+      const button = doc.querySelector('.fm-toggle-button');
+      button?.click();
+      const panel = doc.querySelector('#favorites-manager');
+      const firstOpen = panel && win.getComputedStyle(panel).display !== 'none';
+      button?.click();
+      const closed = panel && win.getComputedStyle(panel).display === 'none';
+      button?.click();
+      const reopened = panel && win.getComputedStyle(panel).display !== 'none';
+      return firstOpen && closed && reopened;
+    },
+  },
 ];
 
 function saveStorage() {

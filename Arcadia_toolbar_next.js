@@ -3316,6 +3316,7 @@ class FavoritesManager {
       let container = document.getElementById('favorites-manager');
       if (!container) {
         container = FavoritesUIBuilder.createUI(this);
+        container.style.display = 'none';
         document.body.appendChild(container);
         this.#setupEvents(container);
       }
