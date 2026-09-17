@@ -2237,11 +2237,12 @@ class ListRenderer {
         const nodes = Array.from(bLast.childNodes);
         bLast.replaceChildren(this.#createLink('all_msg', articleId, nodes));
       }
-      // 修正：DOMCache を活用し不要なDOMクエリを排除
-      if (!this.#domCache.query(row, '.impression-cell')) {
+      // 初期描画中の再処理でも、挿入済みセルを最新DOMから判定する。
+      if (!row.querySelector('.impression-cell')) {
         const tdImp = el('td', { align: 'center', class: 'impression-cell' });
         tdImp.appendChild(this.#createLink('impression', articleId, '？', '&page=1'));
         row.insertBefore(tdImp, row.lastElementChild);
+        this.#domCache.invalidate(row);
       }
     } else {
       const lastIdx = bElements.length - 1;

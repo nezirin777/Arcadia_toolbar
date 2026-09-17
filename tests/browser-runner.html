@@ -693,6 +693,22 @@ const TESTS = [
         row?.style.display !== 'none';
     },
   },
+  {
+    id: 'T-49', fixture: 'ss-list-chiraura.html', route: '/bbs/sst/sst.php?act=list&cate=tiraura&page=1',
+    label: '初期描画中のお気に入り更新で感想セルを重複させない',
+    afterInject(doc, win) {
+      win.requestAnimationFrame(() => {
+        win.dispatchEvent(new win.StorageEvent('storage', {
+          key: 'arcadia_favorites',
+          storageArea: win.localStorage,
+        }));
+      });
+    },
+    check(doc) {
+      const row = findRow(doc, '習作の架空作品');
+      return row?.querySelectorAll('.impression-cell').length === 1;
+    },
+  },
 ];
 
 function saveStorage() {
@@ -744,6 +760,7 @@ async function loadTest(test, source) {
   const script = doc.createElement('script');
   script.textContent = `${source}\n//# sourceURL=Arcadia_toolbar_next.test.js`;
   doc.documentElement.appendChild(script);
+  test.afterInject?.(doc, win);
   await waitForUi(win);
 
   const pageshow = new win.Event('pageshow');
