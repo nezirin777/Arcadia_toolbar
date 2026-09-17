@@ -3103,6 +3103,14 @@ class FavoritesManager {
     this.searchResults = result;
   }
 
+  #encodeFavoriteTitle(title) {
+    return title.replaceAll('\\', '\\\\').replaceAll(' // ', ' \\// ');
+  }
+
+  #decodeFavoriteTitle(title) {
+    return title.replaceAll(' \\// ', ' // ').replaceAll('\\\\', '\\');
+  }
+
   async #export() {
     const CC   = FavoritesUIBuilder.CATEGORY_CONFIG;
     const text = Object.entries(this.favorites)
@@ -3110,8 +3118,9 @@ class FavoritesManager {
       .map(([cat, items]) => {
         const lines = items.map(item => {
           if (cat === 'blocked') return `- ${item}`;
+          const title = this.#encodeFavoriteTitle(item.title);
           const memo = item.memo.replace(/\r\n?/g, '\n').replace(/\n/g, '\n  ');
-          return `- ${item.title}${memo ? ` // ${memo}` : ''}`;
+          return `- ${title}${memo ? ` // ${memo}` : ''}`;
         }).join('\n');
         return `## ${CC[cat]?.name ?? cat}\n${lines}`;
       }).join('\n\n');
@@ -3170,7 +3179,8 @@ class FavoritesManager {
         }
         else {
           const separatorIndex = content.indexOf(' // ');
-          const title = (separatorIndex < 0 ? content : content.slice(0, separatorIndex)).trim();
+          const encodedTitle = (separatorIndex < 0 ? content : content.slice(0, separatorIndex)).trim();
+          const title = this.#decodeFavoriteTitle(encodedTitle);
           const memo = separatorIndex < 0 ? '' : content.slice(separatorIndex + 4).trim();
           if (title) {
             const existing = result[curCat].find(item => item.title === title);
