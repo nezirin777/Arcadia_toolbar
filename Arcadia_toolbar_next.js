@@ -3360,12 +3360,12 @@ class ConfigManager {
         ],
         themes: {
           light: [
-            { id: 'color',           label: '文字色', type: 'text', value: '#000000' },
-            { id: 'backgroundColor', label: '背景色', type: 'text', value: '#FFF7D4' },
+            { id: 'color',           label: '文字色', type: 'text', format: 'color', value: '#000000' },
+            { id: 'backgroundColor', label: '背景色', type: 'text', format: 'color', value: '#FFF7D4' },
           ],
           dark: [
-            { id: 'color',           label: '文字色', type: 'text', value: '#FFFFFF' },
-            { id: 'backgroundColor', label: '背景色', type: 'text', value: '#2a2620' },
+            { id: 'color',           label: '文字色', type: 'text', format: 'color', value: '#FFFFFF' },
+            { id: 'backgroundColor', label: '背景色', type: 'text', format: 'color', value: '#2a2620' },
           ],
         },
       },
@@ -3419,7 +3419,7 @@ class SettingsEditor {
     const path   = `${category}.${field.id}`;
     const idAttr = path.replace(/\./g, '-');
     const raw    = this.#get(path);
-    const value  = this.#validate(raw, field.type, field.value);
+    const value  = this.#validate(raw, field.type, field.value, field.format);
     const input  = el('input', {
       id:   idAttr,
       type: field.type === 'checkbox' ? 'checkbox' : field.type === 'password' ? 'password' : field.type === 'number' ? 'number' : 'text',
@@ -3473,11 +3473,11 @@ class SettingsEditor {
     return container;
   }
 
-  #validate(value, type, defaultValue) {
+  #validate(value, type, defaultValue, format) {
     if (type === 'checkbox') return typeof value === 'boolean' ? value : defaultValue;
     if (type === 'number') { const n = parseInt(value, 10); return !isNaN(n) && n >= 0 ? n : defaultValue; }
     if (typeof value === 'string') {
-      if (value.startsWith('#') && !/^#[0-9A-F]{6}$/i.test(value)) return defaultValue;
+      if (format === 'color' && !/^#[0-9A-F]{6}$/i.test(value)) return defaultValue;
       return value;
     }
     return defaultValue;
@@ -3494,7 +3494,7 @@ class SettingsEditor {
           const def  = this.#findFieldDef(path);
           const type = def?.type ?? (input.type === 'checkbox' ? 'checkbox' : input.type === 'number' ? 'number' : 'text');
           const raw  = type === 'checkbox' ? input.checked : input.value;
-          this.#set(path, this.#validate(raw, type, def?.value));
+          this.#set(path, this.#validate(raw, type, def?.value, def?.format));
         });
         this.#configManager.save(this.#currentConfig);
         this.#refreshUI(editor);

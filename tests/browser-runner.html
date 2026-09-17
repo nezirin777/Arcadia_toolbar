@@ -734,6 +734,29 @@ const TESTS = [
         saved.primary[0]?.memo === '1行目\n2行目 // 後半';
     },
   },
+  {
+    id: 'T-51', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '#で始まる投稿者情報を色コード扱いせず保存',
+    check(doc, win) {
+      doc.querySelector('.se-settings-button')?.click();
+      const values = {
+        '#posting-userInfo-name': '#利用者',
+        '#posting-userInfo-tripcode': '#トリップ',
+        '#posting-userInfo-password': '#秘密',
+      };
+      for (const [selector, value] of Object.entries(values)) {
+        const input = doc.querySelector(selector);
+        if (!input) return false;
+        input.value = value;
+        input.dispatchEvent(new win.Event('input', { bubbles: true }));
+      }
+      doc.querySelector('[data-action="save"]')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_config') || '{}');
+      return saved.posting?.userInfo?.name === '#利用者' &&
+        saved.posting?.userInfo?.tripcode === '#トリップ' &&
+        saved.posting?.userInfo?.password === '#秘密';
+    },
+  },
 ];
 
 function saveStorage() {
