@@ -880,6 +880,64 @@ const TESTS = [
         doc.querySelector('#settings-status')?.textContent.includes('設定をリセットしました');
     },
   },
+  {
+    id: 'T-59', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '設定スキーマの全37項目を既定値どおり表示・保存',
+    check(doc, win) {
+      const expected = {
+        'viewer.styleBar': true,
+        'viewer.fixedIndex': true,
+        'viewer.skipErrorPage': true,
+        'ssList.directLinks': true,
+        'ssList.hideAdsShort': false,
+        'ssList.adsThreshold': 1,
+        'ssList.adjustLineHeight': true,
+        'ssList.showPvRatio': false,
+        'ssList.hideLowPv': false,
+        'ssList.pvThreshold': 500,
+        'ssList.skipXXXWarning': true,
+        'ssList.removeTestBoard': true,
+        'ssList.openSSInNewTab': true,
+        'ssList.skipSearchWarning': true,
+        'ssList.skipMainWarning': true,
+        'board.embedPageLinks': true,
+        'board.sortDesc': true,
+        'board.japaneseDate': true,
+        'board.searchBar': true,
+        'board.hideSpam': true,
+        'posting.autoFill': false,
+        'posting.userInfo.name': '',
+        'posting.userInfo.tripcode': '',
+        'posting.userInfo.password': '',
+        'style.width': '90%',
+        'style.lineHeight': '150%',
+        'style.fontSize': '100%',
+        'style.fontFamily': '',
+        'style.themes.light.color': '#000000',
+        'style.themes.light.backgroundColor': '#FFF7D4',
+        'style.themes.dark.color': '#FFFFFF',
+        'style.themes.dark.backgroundColor': '#2a2620',
+        'autoExecute.spacing': true,
+        'autoExecute.indent': false,
+        'autoExecute.linebreak': false,
+        'autoExecute.wordWrap': true,
+        'autoExecute.insertspace': true,
+      };
+      const valueAt = (object, path) => path.split('.').reduce((value, key) => value?.[key], object);
+
+      doc.querySelector('.se-settings-button')?.click();
+      doc.querySelector('[data-action="reset"]')?.click();
+      const inputs = Array.from(doc.querySelectorAll('#settings-editor input[data-path]'));
+      const uiMatches = Object.entries(expected).every(([path, value]) => {
+        const input = inputs.find(candidate => candidate.dataset.path === path);
+        return input && (input.type === 'checkbox' ? input.checked === value : input.value === String(value));
+      });
+      doc.querySelector('[data-action="save"]')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_config') || '{}');
+      const savedMatches = Object.entries(expected).every(([path, value]) => valueAt(saved, path) === value);
+      return inputs.length === 37 && uiMatches && savedMatches;
+    },
+  },
 ];
 
 function saveStorage() {

@@ -70,66 +70,109 @@ function deepFreeze(obj) {
   return Object.freeze(obj);
 }
 
+/**
+ * 設定画面へ公開する項目の単一定義。
+ * `value` は入力欄の既定値であると同時に、実行時設定の既定値として使う。
+ */
+const CONFIG_SCHEMA = deepFreeze({
+  viewer: {
+    displayName: '閲覧設定',
+    fields: [
+      { id: 'styleBar',      label: 'スタイル設定バー表示', type: 'checkbox', value: true },
+      { id: 'fixedIndex',    label: '目次埋め込み',          type: 'checkbox', value: true },
+      { id: 'skipErrorPage', label: '抜け記事エラー回避',    type: 'checkbox', value: true },
+    ],
+  },
+  ssList: {
+    displayName: '記事一覧での設定',
+    fields: [
+      { id: 'directLinks',       label: '全話・感想直リンク',      type: 'checkbox', value: true },
+      { id: 'hideAdsShort',      label: '広告・短編非表示',        type: 'checkbox', value: false },
+      { id: 'adsThreshold',      label: '広告閾値',                type: 'number',   value: 1 },
+      { id: 'adjustLineHeight',  label: '一覧の行間調整',          type: 'checkbox', value: true },
+      { id: 'showPvRatio',       label: 'PV÷記事数表示',          type: 'checkbox', value: false },
+      { id: 'hideLowPv',         label: '低PV率非表示',            type: 'checkbox', value: false },
+      { id: 'pvThreshold',       label: 'PV閾値',                  type: 'number',   value: 500 },
+      { id: 'skipXXXWarning',    label: 'XXX板警告スキップ',       type: 'checkbox', value: true },
+      { id: 'removeTestBoard',   label: 'テスト板リンク削除',       type: 'checkbox', value: true },
+      { id: 'openSSInNewTab',    label: 'SSを新タブで開く',         type: 'checkbox', value: true },
+      { id: 'skipSearchWarning', label: '捜索掲示板警告スキップ',   type: 'checkbox', value: true },
+      { id: 'skipMainWarning',   label: 'メイン掲示板警告スキップ', type: 'checkbox', value: true },
+    ],
+  },
+  board: {
+    displayName: '感想ページ/掲示板設定',
+    fields: [
+      { id: 'embedPageLinks', label: '感想ページにリンク埋め込み', type: 'checkbox', value: true },
+      { id: 'sortDesc',       label: '感想順を降順に',             type: 'checkbox', value: true },
+      { id: 'japaneseDate',   label: '日本語日付表示',             type: 'checkbox', value: true },
+      { id: 'searchBar',      label: '検索バー埋め込み',           type: 'checkbox', value: true },
+      { id: 'hideSpam',       label: 'スパム非表示',               type: 'checkbox', value: true },
+    ],
+  },
+  posting: {
+    displayName: '投稿設定',
+    fields: [{ id: 'autoFill', label: '自動入力', type: 'checkbox', value: false }],
+    userInfo: [
+      { id: 'name',     label: '名前',       type: 'text',     value: '' },
+      { id: 'tripcode', label: 'トリップ',   type: 'text',     value: '' },
+      { id: 'password', label: 'パスワード', type: 'password', value: '' },
+    ],
+  },
+  style: {
+    displayName: 'デフォルトスタイル設定',
+    fields: [
+      { id: 'width',      label: '幅',        type: 'text', value: '90%' },
+      { id: 'lineHeight', label: '行間',       type: 'text', value: '150%' },
+      { id: 'fontSize',   label: '文字サイズ', type: 'text', value: '100%' },
+      { id: 'fontFamily', label: 'フォント',   type: 'text', value: '' },
+    ],
+    themes: {
+      light: [
+        { id: 'color',           label: '文字色', type: 'text', format: 'color', value: '#000000' },
+        { id: 'backgroundColor', label: '背景色', type: 'text', format: 'color', value: '#FFF7D4' },
+      ],
+      dark: [
+        { id: 'color',           label: '文字色', type: 'text', format: 'color', value: '#FFFFFF' },
+        { id: 'backgroundColor', label: '背景色', type: 'text', format: 'color', value: '#2a2620' },
+      ],
+    },
+  },
+  autoExecute: {
+    displayName: 'デフォルト自動実行設定',
+    fields: [
+      { id: 'spacing',     label: '空行圧縮',           type: 'checkbox', value: true },
+      { id: 'indent',      label: '段落頭を字下げ',     type: 'checkbox', value: false },
+      { id: 'linebreak',   label: '段落途中の改行無視', type: 'checkbox', value: false },
+      { id: 'wordWrap',    label: '横幅破壊回避',       type: 'checkbox', value: true },
+      { id: 'insertspace', label: '空行挿入',           type: 'checkbox', value: true },
+    ],
+  },
+});
+
+/** CONFIG_SCHEMA の編集項目から実行時既定値を生成する。 */
+function buildDefaultConfig(schema) {
+  const defaults = {};
+  for (const [category, definition] of Object.entries(schema)) {
+    const section = {};
+    for (const field of (definition.fields ?? [])) section[field.id] = field.value;
+    if (definition.userInfo) {
+      section.userInfo = Object.fromEntries(definition.userInfo.map(field => [field.id, field.value]));
+    }
+    if (definition.themes) {
+      section.themes = Object.fromEntries(Object.entries(definition.themes).map(([theme, fields]) => [
+        theme,
+        Object.fromEntries(fields.map(field => [field.id, field.value])),
+      ]));
+    }
+    defaults[category] = section;
+  }
+  return defaults;
+}
+
 /** アプリケーション既定設定。実行時は必ず StorageManager 経由で読む。 */
 const CONFIG = deepFreeze({
-  // 閲覧機能
-  viewer: {
-    styleBar: true,      // 体裁変更バーの埋め込み
-    fixedIndex: true,    // 目次の固定位置埋め込み
-    skipErrorPage: true, // 歯抜け記事のエラー画面回避
-  },
-  // SSリスト設定
-  ssList: {
-    directLinks: true,
-    hideAdsShort: false,
-    adsThreshold: 1,
-    adjustLineHeight: true,
-    showPvRatio: false,
-    hideLowPv: false,
-    pvThreshold: 500,
-    skipXXXWarning: true,
-    removeTestBoard: true,
-    openSSInNewTab: true,
-    skipSearchWarning: true,
-    skipMainWarning: true,
-  },
-  // 掲示板設定
-  board: {
-    embedPageLinks: true,
-    sortDesc: true,
-    japaneseDate: true,
-    searchBar: true,
-    hideSpam: true,
-  },
-  // 投稿設定
-  posting: {
-    autoFill: false,
-    userInfo: {
-      name: '',
-      tripcode: '',
-      password: '',
-    },
-  },
-  // スタイル設定
-  style: {
-    width: '90%',
-    lineHeight: '150%',
-    fontSize: '100%',
-    fontFamily: '',
-    themes: {
-      light: { color: '#000000', backgroundColor: '#FFF7D4' },
-      dark:  { color: '#FFFFFF', backgroundColor: '#2a2620' },
-    },
-  },
-  // 自動実行設定
-  autoExecute: {
-    spacing: true,
-    indent: false,
-    linebreak: false,
-    wordWrap: true,
-    insertspace: true,
-  },
-  // お気に入り設定
+  ...buildDefaultConfig(CONFIG_SCHEMA),
   favorites: {
     primary: [],
     secondary: [],
@@ -3342,84 +3385,7 @@ class ConfigManager {
   load()  { return StorageManager.getConfig(this.#defaultConfig); }
   save(c) { StorageManager.saveConfig(c); }
   reset() { return StorageManager.resetConfig(this.#defaultConfig); }
-
-  getEditableFields() {
-    return {
-      viewer: {
-        displayName: '閲覧設定',
-        fields: [
-          { id: 'styleBar',      label: 'スタイル設定バー表示', type: 'checkbox', value: true },
-          { id: 'fixedIndex',    label: '目次埋め込み',          type: 'checkbox', value: true },
-          { id: 'skipErrorPage', label: '抜け記事エラー回避',    type: 'checkbox', value: true },
-        ],
-      },
-      ssList: {
-        displayName: '記事一覧での設定',
-        fields: [
-          { id: 'directLinks',       label: '全話・感想直リンク',      type: 'checkbox', value: true },
-          { id: 'hideAdsShort',      label: '広告・短編非表示',        type: 'checkbox', value: false },
-          { id: 'adsThreshold',      label: '広告閾値',                type: 'number',   value: 1 },
-          { id: 'adjustLineHeight',  label: '一覧の行間調整',          type: 'checkbox', value: true },
-          { id: 'showPvRatio',       label: 'PV÷記事数表示',          type: 'checkbox', value: false },
-          { id: 'hideLowPv',         label: '低PV率非表示',            type: 'checkbox', value: false },
-          { id: 'pvThreshold',       label: 'PV閾値',                  type: 'number',   value: 500 },
-          { id: 'skipXXXWarning',    label: 'XXX板警告スキップ',       type: 'checkbox', value: true },
-          { id: 'removeTestBoard',   label: 'テスト板リンク削除',       type: 'checkbox', value: true },
-          { id: 'openSSInNewTab',    label: 'SSを新タブで開く',         type: 'checkbox', value: true },
-          { id: 'skipSearchWarning', label: '捜索掲示板警告スキップ',   type: 'checkbox', value: true },
-          { id: 'skipMainWarning',   label: 'メイン掲示板警告スキップ', type: 'checkbox', value: true },
-        ],
-      },
-      board: {
-        displayName: '感想ページ/掲示板設定',
-        fields: [
-          { id: 'embedPageLinks', label: '感想ページにリンク埋め込み', type: 'checkbox', value: true },
-          { id: 'sortDesc',       label: '感想順を降順に',             type: 'checkbox', value: true },
-          { id: 'japaneseDate',   label: '日本語日付表示',             type: 'checkbox', value: true },
-          { id: 'searchBar',      label: '検索バー埋め込み',           type: 'checkbox', value: true },
-          { id: 'hideSpam',       label: 'スパム非表示',               type: 'checkbox', value: true },
-        ],
-      },
-      posting: {
-        displayName: '投稿設定',
-        fields: [{ id: 'autoFill', label: '自動入力', type: 'checkbox', value: false }],
-        userInfo: [
-          { id: 'name',     label: '名前',       type: 'text',     value: '' },
-          { id: 'tripcode', label: 'トリップ',   type: 'text',     value: '' },
-          { id: 'password', label: 'パスワード', type: 'password', value: '' },
-        ],
-      },
-      style: {
-        displayName: 'デフォルトスタイル設定',
-        fields: [
-          { id: 'width',      label: '幅',        type: 'text', value: '90%' },
-          { id: 'lineHeight', label: '行間',       type: 'text', value: '150%' },
-          { id: 'fontSize',   label: '文字サイズ', type: 'text', value: '100%' },
-          { id: 'fontFamily', label: 'フォント',   type: 'text', value: '' },
-        ],
-        themes: {
-          light: [
-            { id: 'color',           label: '文字色', type: 'text', format: 'color', value: '#000000' },
-            { id: 'backgroundColor', label: '背景色', type: 'text', format: 'color', value: '#FFF7D4' },
-          ],
-          dark: [
-            { id: 'color',           label: '文字色', type: 'text', format: 'color', value: '#FFFFFF' },
-            { id: 'backgroundColor', label: '背景色', type: 'text', format: 'color', value: '#2a2620' },
-          ],
-        },
-      },
-      autoExecute: {
-        displayName: 'デフォルト自動実行設定',
-        fields: [
-          { id: 'spacing',     label: '空行圧縮',           type: 'checkbox', value: true },
-          { id: 'indent',      label: '段落頭を字下げ',     type: 'checkbox', value: false },
-          { id: 'linebreak',   label: '段落途中の改行無視', type: 'checkbox', value: false },
-          { id: 'wordWrap',    label: '横幅破壊回避',       type: 'checkbox', value: true },
-          { id: 'insertspace', label: '空行挿入',           type: 'checkbox', value: true },
-        ],
-      },
-    };
-  }
+  getEditableFields() { return CONFIG_SCHEMA; }
 }
 
 /* --------------------------------------------------
