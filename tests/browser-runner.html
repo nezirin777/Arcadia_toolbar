@@ -938,6 +938,43 @@ const TESTS = [
       return inputs.length === 37 && uiMatches && savedMatches;
     },
   },
+  {
+    id: 'T-60', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: 'FavoritesCodecがDOM・保存を変更せず既存形式を往復変換',
+    check(doc, win) {
+      const source = {
+        primary: [{ title: '作品 \\ 外伝 // 特別版', memo: '1行目\r\n2行目 // 続き' }],
+        secondary: [],
+        watching: [],
+        blocked: ['NG語'],
+      };
+      const probe = doc.createElement('script');
+      probe.textContent = `(() => {
+        const source = ${JSON.stringify(source)};
+        const beforeSource = JSON.stringify(source);
+        const beforeStorage = localStorage.getItem('arcadia_favorites');
+        const text = FavoritesCodec.stringify(source);
+        const parsed = FavoritesCodec.parse(text);
+        window.__favoritesCodecProbe = {
+          text,
+          parsed,
+          sourceUnchanged: JSON.stringify(source) === beforeSource,
+          storageUnchanged: localStorage.getItem('arcadia_favorites') === beforeStorage,
+        };
+      })();`;
+      doc.documentElement.appendChild(probe);
+
+      const result = win.__favoritesCodecProbe;
+      const parsed = result?.parsed;
+      const expectedText = '# お気に入り一覧\n\n## 最重要お気に入り\n' +
+        '- 作品 \\\\ 外伝 \\// 特別版 // 1行目\n  2行目 // 続き\n\n## NGワード\n- NG語';
+      return result?.text === expectedText && result.sourceUnchanged && result.storageUnchanged &&
+        parsed?.importedCount === 2 && parsed.favorites.primary?.length === 1 &&
+        parsed.favorites.primary[0]?.title === '作品 \\ 外伝 // 特別版' &&
+        parsed.favorites.primary[0]?.memo === '1行目\n2行目 // 続き' &&
+        parsed.favorites.blocked?.[0] === 'NG語';
+    },
+  },
 ];
 
 function saveStorage() {

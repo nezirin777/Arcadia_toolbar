@@ -32,7 +32,7 @@
  *   RENDERERS        … LinkOptimizer / ListRenderer / TableRebuilder
  *   FEATURES (L3)    … ListFormatter / StyleControlBar /
  *                      SpamFilter / FormFiller /
- *                      FavoritesUIBuilder / FavoritesManager /
+ *                      FavoritesCodec / FavoritesUIBuilder / FavoritesManager /
  *                      ConfigManager / SettingsEditor
  *   INITIALIZE       … boot() / main()
  *
@@ -3012,20 +3012,101 @@ class FormFiller {
 }
 
 /* --------------------------------------------------
- * FavoritesUIBuilder
+ * FavoritesCodec  /  FavoritesUIBuilder
  * -------------------------------------------------- */
-class FavoritesUIBuilder {
-  static #CC = Object.freeze({
-    primary:   { name: '最重要お気に入り', icon: '📚' },
-    secondary: { name: 'お気に入り',       icon: '🔖' },
-    watching:  { name: 'ウォッチ中',       icon: '👀' },
-    blocked:   { name: 'NGワード',         icon: '🚫' },
-  });
+const FAVORITE_CATEGORY_CONFIG = deepFreeze({
+  primary:   { name: '最重要お気に入り', icon: '📚' },
+  secondary: { name: 'お気に入り',       icon: '🔖' },
+  watching:  { name: 'ウォッチ中',       icon: '👀' },
+  blocked:   { name: 'NGワード',         icon: '🚫' },
+});
 
-  static get CATEGORY_CONFIG() { return this.#CC; }
+/** お気に入りのテキスト形式をDOM・Storageに依存せず相互変換する。 */
+class FavoritesCodec {
+  static #emptyFavorites() {
+    return { primary: [], secondary: [], watching: [], blocked: [] };
+  }
+
+  static #encodeTitle(title) {
+    return title.replaceAll('\\', '\\\\').replaceAll(' // ', ' \\// ');
+  }
+
+  static #decodeTitle(title) {
+    return title.replaceAll(' \\// ', ' // ').replaceAll('\\\\', '\\');
+  }
+
+  static stringify(favorites) {
+    const sections = Object.entries(favorites)
+      .filter(([, items]) => items.length)
+      .map(([category, items]) => {
+        const lines = items.map(item => {
+          if (category === 'blocked') return `- ${item}`;
+          const title = FavoritesCodec.#encodeTitle(item.title);
+          const memo = item.memo.replace(/\r\n?/g, '\n').replace(/\n/g, '\n  ');
+          return `- ${title}${memo ? ` // ${memo}` : ''}`;
+        }).join('\n');
+        return `## ${FAVORITE_CATEGORY_CONFIG[category]?.name ?? category}\n${lines}`;
+      }).join('\n\n');
+    return `# お気に入り一覧\n\n${sections}`;
+  }
+
+  static parse(text) {
+    const nameToKey = Object.fromEntries(
+      Object.entries(FAVORITE_CATEGORY_CONFIG).map(([key, value]) => [value.name, key])
+    );
+    const favorites = FavoritesCodec.#emptyFavorites();
+    let currentCategory = null;
+    let lastFavorite = null;
+
+    for (const rawLine of text.split('\n')) {
+      const normalizedLine = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+      if (lastFavorite && normalizedLine.startsWith('  ')) {
+        lastFavorite.memo += `\n${normalizedLine.slice(2)}`;
+        continue;
+      }
+
+      const line = normalizedLine.trim();
+      if (!line) continue;
+      if (line.startsWith('## ')) {
+        currentCategory = nameToKey[line.slice(3)] ?? null;
+        lastFavorite = null;
+        continue;
+      }
+      if (!line.startsWith('- ') || !currentCategory) continue;
+
+      lastFavorite = null;
+      const content = line.slice(2).trim();
+      if (!content) continue;
+      if (currentCategory === 'blocked') {
+        if (!favorites.blocked.includes(content)) favorites.blocked.push(content);
+        continue;
+      }
+
+      const separatorIndex = content.indexOf(' // ');
+      const encodedTitle = (separatorIndex < 0 ? content : content.slice(0, separatorIndex)).trim();
+      const title = FavoritesCodec.#decodeTitle(encodedTitle);
+      const memo = separatorIndex < 0 ? '' : content.slice(separatorIndex + 4).trim();
+      if (!title) continue;
+
+      const existing = favorites[currentCategory].find(item => item.title === title);
+      if (existing) {
+        existing.memo = memo;
+        lastFavorite = existing;
+      } else {
+        lastFavorite = { title, memo };
+        favorites[currentCategory].push(lastFavorite);
+      }
+    }
+
+    const importedCount = Object.values(favorites).reduce((total, items) => total + items.length, 0);
+    return { favorites, importedCount };
+  }
+}
+
+class FavoritesUIBuilder {
 
   static createUI(manager) {
-    const CC = FavoritesUIBuilder.#CC;
+    const CC = FAVORITE_CATEGORY_CONFIG;
     const container = el('div', { id: 'favorites-manager', class: 'fm-container' });
 
     const header = el('div', { class: 'fm-header' },
@@ -3075,7 +3156,7 @@ class FavoritesUIBuilder {
   }
 
   static #buildList(favorites, searchResults) {
-    const CC   = FavoritesUIBuilder.#CC;
+    const CC   = FAVORITE_CATEGORY_CONFIG;
     const data = searchResults ?? favorites;
     const ul   = el('ul', { class: 'fm-list' });
     const hasItems = Object.values(data).some(arr => arr?.length > 0);
@@ -3169,33 +3250,13 @@ class FavoritesManager {
     this.searchResults = result;
   }
 
-  #encodeFavoriteTitle(title) {
-    return title.replaceAll('\\', '\\\\').replaceAll(' // ', ' \\// ');
-  }
-
-  #decodeFavoriteTitle(title) {
-    return title.replaceAll(' \\// ', ' // ').replaceAll('\\\\', '\\');
-  }
-
   async #export() {
-    const CC   = FavoritesUIBuilder.CATEGORY_CONFIG;
-    const text = Object.entries(this.favorites)
-      .filter(([, items]) => items.length)
-      .map(([cat, items]) => {
-        const lines = items.map(item => {
-          if (cat === 'blocked') return `- ${item}`;
-          const title = this.#encodeFavoriteTitle(item.title);
-          const memo = item.memo.replace(/\r\n?/g, '\n').replace(/\n/g, '\n  ');
-          return `- ${title}${memo ? ` // ${memo}` : ''}`;
-        }).join('\n');
-        return `## ${CC[cat]?.name ?? cat}\n${lines}`;
-      }).join('\n\n');
     const ta = document.getElementById('export-text');
     const im = document.getElementById('import-text');
     if (!ta || !im) return;
     im.style.display = 'none';
     ta.style.display = 'block';
-    ta.value = `# お気に入り一覧\n\n${text}`;
+    ta.value = FavoritesCodec.stringify(this.favorites);
     let copied = false;
     if (navigator.clipboard?.writeText) {
       try {
@@ -3219,51 +3280,9 @@ class FavoritesManager {
   }
 
   #import(text) {
-    const CC        = FavoritesUIBuilder.CATEGORY_CONFIG;
-    const nameToKey = Object.fromEntries(Object.entries(CC).map(([k, v]) => [v.name, k]));
-    const result    = { primary: [], secondary: [], watching: [], blocked: [] };
-    let curCat      = null;
-    let lastFavorite = null;
-    for (const rawLine of text.split('\n')) {
-      const normalizedLine = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
-      if (lastFavorite && normalizedLine.startsWith('  ')) {
-        lastFavorite.memo += `\n${normalizedLine.slice(2)}`;
-        continue;
-      }
-      const line = normalizedLine.trim();
-      if (!line) continue;
-      if (line.startsWith('## ')) {
-        curCat = nameToKey[line.slice(3)] ?? null;
-        lastFavorite = null;
-      }
-      else if (line.startsWith('- ') && curCat) {
-        lastFavorite = null;
-        const content = line.slice(2).trim();
-        if (!content) continue;
-        if (curCat === 'blocked') {
-          if (!result.blocked.includes(content)) result.blocked.push(content);
-        }
-        else {
-          const separatorIndex = content.indexOf(' // ');
-          const encodedTitle = (separatorIndex < 0 ? content : content.slice(0, separatorIndex)).trim();
-          const title = this.#decodeFavoriteTitle(encodedTitle);
-          const memo = separatorIndex < 0 ? '' : content.slice(separatorIndex + 4).trim();
-          if (title) {
-            const existing = result[curCat].find(item => item.title === title);
-            if (existing) {
-              existing.memo = memo;
-              lastFavorite = existing;
-            } else {
-              lastFavorite = { title, memo };
-              result[curCat].push(lastFavorite);
-            }
-          }
-        }
-      }
-    }
-    const importedCount = Object.values(result).reduce((total, items) => total + items.length, 0);
+    const { favorites, importedCount } = FavoritesCodec.parse(text);
     if (!importedCount) return 0;
-    this.favorites = result;
+    this.favorites = favorites;
     this.#save();
     if (this.#searchTerm) this.#search(this.#searchTerm);
     else this.searchResults = null;
