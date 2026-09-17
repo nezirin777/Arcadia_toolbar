@@ -3108,9 +3108,11 @@ class FavoritesManager {
     const text = Object.entries(this.favorites)
       .filter(([, items]) => items.length)
       .map(([cat, items]) => {
-        const lines = items.map(item =>
-          cat === 'blocked' ? `- ${item}` : `- ${item.title}${item.memo ? ` // ${item.memo}` : ''}`
-        ).join('\n');
+        const lines = items.map(item => {
+          if (cat === 'blocked') return `- ${item}`;
+          const memo = item.memo.replace(/\r\n?/g, '\n').replace(/\n/g, '\n  ');
+          return `- ${item.title}${memo ? ` // ${memo}` : ''}`;
+        }).join('\n');
         return `## ${CC[cat]?.name ?? cat}\n${lines}`;
       }).join('\n\n');
     const ta = document.getElementById('export-text');
@@ -3146,11 +3148,21 @@ class FavoritesManager {
     const nameToKey = Object.fromEntries(Object.entries(CC).map(([k, v]) => [v.name, k]));
     const result    = { primary: [], secondary: [], watching: [], blocked: [] };
     let curCat      = null;
+    let lastFavorite = null;
     for (const rawLine of text.split('\n')) {
-      const line = rawLine.trim();
+      const normalizedLine = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+      if (lastFavorite && normalizedLine.startsWith('  ')) {
+        lastFavorite.memo += `\n${normalizedLine.slice(2)}`;
+        continue;
+      }
+      const line = normalizedLine.trim();
       if (!line) continue;
-      if (line.startsWith('## ')) { curCat = nameToKey[line.slice(3)] ?? null; }
+      if (line.startsWith('## ')) {
+        curCat = nameToKey[line.slice(3)] ?? null;
+        lastFavorite = null;
+      }
       else if (line.startsWith('- ') && curCat) {
+        lastFavorite = null;
         const content = line.slice(2).trim();
         if (!content) continue;
         if (curCat === 'blocked') {
@@ -3162,8 +3174,13 @@ class FavoritesManager {
           const memo = separatorIndex < 0 ? '' : content.slice(separatorIndex + 4).trim();
           if (title) {
             const existing = result[curCat].find(item => item.title === title);
-            if (existing) existing.memo = memo;
-            else result[curCat].push({ title, memo });
+            if (existing) {
+              existing.memo = memo;
+              lastFavorite = existing;
+            } else {
+              lastFavorite = { title, memo };
+              result[curCat].push(lastFavorite);
+            }
           }
         }
       }

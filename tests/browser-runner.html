@@ -709,6 +709,31 @@ const TESTS = [
       return row?.querySelectorAll('.impression-cell').length === 1;
     },
   },
+  {
+    id: 'T-50', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '複数行のお気に入りメモを書き出し後も欠落させない',
+    setupStorage() {
+      localStorage.setItem('arcadia_favorites', JSON.stringify({
+        primary: [{ title: '複数行作品', memo: '1行目\n2行目 // 後半' }],
+        secondary: [], watching: [], blocked: [],
+      }));
+    },
+    async check(doc, win) {
+      doc.querySelector('.fm-toggle-button')?.click();
+      doc.querySelector('#export-favorites')?.click();
+      await new Promise(resolve => win.setTimeout(resolve, 20));
+      const exported = doc.querySelector('#export-text')?.value;
+      if (!exported) return false;
+      doc.querySelector('#import-favorites')?.click();
+      const importText = doc.querySelector('#import-text');
+      if (!importText) return false;
+      importText.value = exported;
+      doc.querySelector('#import-favorites')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_favorites') || '{}');
+      return saved.primary?.length === 1 && saved.primary[0]?.title === '複数行作品' &&
+        saved.primary[0]?.memo === '1行目\n2行目 // 後半';
+    },
+  },
 ];
 
 function saveStorage() {
