@@ -1460,7 +1460,7 @@ class NovelSearchBar {
       },
     },
     narou: {
-      action: 'http://yomou.syosetu.com/search.php',
+      action: 'https://yomou.syosetu.com/search.php',
       buttonText: 'なろうで検索',
       options: {
         name: 'order',

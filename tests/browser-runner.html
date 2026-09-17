@@ -823,6 +823,63 @@ const TESTS = [
         clear.style.display === 'none' && listText.includes('年齢制限用');
     },
   },
+  {
+    id: 'T-56', fixture: 'main-list.html', route: '/bbs/mainbbs/mainbbs.php?act=list&cate=all&page=1',
+    label: '検索バーの開閉・送信先・空入力防止',
+    setupStorage() {
+      localStorage.setItem('arcadia_config', JSON.stringify({
+        ...TEST_CONFIG,
+        board: { ...TEST_CONFIG.board, searchBar: true },
+      }));
+    },
+    check(doc) {
+      const toggle = doc.querySelector('.search-toggle-button');
+      const panel = doc.querySelector('.search-bar-panel');
+      const forms = Array.from(doc.querySelectorAll('.search-form'));
+      toggle?.click();
+      const emptySubmit = new Event('submit', { bubbles: true, cancelable: true });
+      forms[0]?.dispatchEvent(emptySubmit);
+      return panel?.classList.contains('is-open') && forms.length === 3 &&
+        forms[0]?.action.endsWith('/bbs/sst/sst.php') &&
+        forms[1]?.action === 'https://yomou.syosetu.com/search.php' &&
+        forms[2]?.action === 'https://syosetu.org/search/' &&
+        forms.every(form => form.querySelector('input[name="word"]')) &&
+        emptySubmit.defaultPrevented;
+    },
+  },
+  {
+    id: 'T-57', fixture: 'search-list.html', route: '/bbs/sss/sss.php?act=list&cate=all&page=1',
+    label: 'スパムらしいURL行だけを非表示にする',
+    setupStorage() {
+      localStorage.setItem('arcadia_config', JSON.stringify({
+        ...TEST_CONFIG,
+        board: { ...TEST_CONFIG.board, hideSpam: true },
+      }));
+    },
+    check(doc) {
+      const spam = findRow(doc, 'https://spam.example/ABCDEFGHIJKLMNO');
+      const normal = findRow(doc, 'EnglishTitle');
+      return spam?.style.display === 'none' && normal?.style.display !== 'none';
+    },
+  },
+  {
+    id: 'T-58', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '設定リセットで保存値と入力欄を既定値へ戻す',
+    setupStorage() {
+      localStorage.setItem('arcadia_config', JSON.stringify({
+        ...TEST_CONFIG,
+        board: { ...TEST_CONFIG.board, searchBar: false },
+      }));
+    },
+    check(doc, win) {
+      doc.querySelector('.se-settings-button')?.click();
+      const searchBar = doc.querySelector('#board-searchBar');
+      if (!searchBar || searchBar.checked) return false;
+      doc.querySelector('[data-action="reset"]')?.click();
+      return win.localStorage.getItem('arcadia_config') === null && searchBar.checked &&
+        doc.querySelector('#settings-status')?.textContent.includes('設定をリセットしました');
+    },
+  },
 ];
 
 function saveStorage() {
