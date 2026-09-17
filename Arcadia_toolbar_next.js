@@ -3155,7 +3155,9 @@ class FavoritesManager {
           if (!result.blocked.includes(content)) result.blocked.push(content);
         }
         else {
-          const [title, memo = ''] = content.split(' // ').map(s => s.trim());
+          const separatorIndex = content.indexOf(' // ');
+          const title = (separatorIndex < 0 ? content : content.slice(0, separatorIndex)).trim();
+          const memo = separatorIndex < 0 ? '' : content.slice(separatorIndex + 4).trim();
           if (title) {
             const existing = result[curCat].find(item => item.title === title);
             if (existing) existing.memo = memo;

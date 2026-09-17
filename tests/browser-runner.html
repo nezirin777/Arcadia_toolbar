@@ -657,6 +657,21 @@ const TESTS = [
       return !doc.querySelector('#new_sstable a[href*="cate=test"]');
     },
   },
+  {
+    id: 'T-47', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '区切り文字を含むお気に入りメモを欠落させずインポート',
+    check(doc, win) {
+      doc.querySelector('.fm-toggle-button')?.click();
+      doc.querySelector('#import-favorites')?.click();
+      const ta = doc.querySelector('#import-text');
+      if (!ta) return false;
+      ta.value = '## 最重要お気に入り\n- 区切り付き作品 // 前半 // 後半';
+      doc.querySelector('#import-favorites')?.click();
+      const saved = JSON.parse(win.localStorage.getItem('arcadia_favorites') || '{}');
+      return saved.primary?.length === 1 && saved.primary[0]?.title === '区切り付き作品' &&
+        saved.primary[0]?.memo === '前半 // 後半';
+    },
+  },
 ];
 
 function saveStorage() {
