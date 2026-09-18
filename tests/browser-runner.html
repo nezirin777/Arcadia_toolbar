@@ -1334,7 +1334,7 @@ const TESTS = [
       return linebreakOnlyPassed &&
         combined?.querySelectorAll('br').length === 4 &&
         combined.textContent === '「最初の会話」　地の文の末尾、「次の会話」' &&
-        doc.documentElement.dataset.arcadiaToolbarVersion === '5.11' &&
+        doc.documentElement.dataset.arcadiaToolbarVersion === '5.12' &&
         doc.documentElement.dataset.arcadiaLinebreakRevision === 'paragraph-boundary-v3' &&
         doc.documentElement.dataset.arcadiaActiveFormats === 'linebreak,spacing,indent,wordWrap,insertspace' &&
         doc.documentElement.dataset.arcadiaLinebreakRemoved === '2' &&
@@ -1360,6 +1360,99 @@ const TESTS = [
         overridesSiteColor: articleHover?.style.getPropertyPriority('background-color') === 'important',
         darkBackground: theme.getPropertyValue('--ss-hover-bg').trim() === '#3d3630',
         darkText: theme.getPropertyValue('--ss-hover-text').trim() === '#ffffff',
+      });
+    },
+  },
+  {
+    id: 'T-76', fixture: 'ss-list.html', route: '/bbs/sst/sst.php?act=list&cate=all&page=1',
+    label: '機能初期化の失敗を隔離し中核起動失敗後に再試行可能',
+    check(doc, win) {
+      const probe = doc.createElement('script');
+      probe.textContent = `(() => {
+        const originalError = console.error;
+        const originalMain = main;
+        const originalBooted = booted;
+        const originalRuntime = appRuntime;
+        const calls = [];
+        const logs = [];
+        console.error = (...args) => logs.push(args.map(String).join(' '));
+
+        try {
+          const runtime = new FeatureRuntime();
+          const failed = runtime.start({
+            init() { calls.push('init:failed'); throw new Error('synthetic init failure'); },
+            destroy() { calls.push('destroy:failed'); },
+          }, 'init', 'failed-init');
+          const continued = runtime.start({
+            init() { calls.push('init:continued'); },
+            destroy() { calls.push('destroy:continued'); },
+          }, 'init', 'continued-init');
+          runtime.destroy();
+
+          const bootRuntime = new FeatureRuntime();
+          boot({}, bootRuntime, [
+            {
+              id: 'failed-create',
+              create() { calls.push('create:failed'); throw new Error('synthetic create failure'); },
+            },
+            {
+              id: 'continued-create',
+              create() {
+                calls.push('create:continued');
+                return {
+                  init() { calls.push('init:created'); },
+                  destroy() { calls.push('destroy:created'); },
+                };
+              },
+            },
+          ]);
+          bootRuntime.destroy();
+
+          let attempts = 0;
+          main = () => {
+            attempts++;
+            if (attempts === 1) throw new Error('synthetic boot failure');
+            return { destroy() { calls.push('destroy:retry'); } };
+          };
+          booted = false;
+          appRuntime = null;
+          const firstResult = safeBoot();
+          const retryWasAvailable = firstResult === false && booted === false && appRuntime === null;
+          const secondResult = safeBoot();
+          const retrySucceeded = secondResult === true && booted === true && attempts === 2;
+          appRuntime?.destroy();
+
+          window.__bootFailureProbe = {
+            failed,
+            continued,
+            retryWasAvailable,
+            retrySucceeded,
+            calls,
+            logs,
+          };
+        } finally {
+          main = originalMain;
+          booted = originalBooted;
+          appRuntime = originalRuntime;
+          console.error = originalError;
+        }
+      })();`;
+      doc.documentElement.appendChild(probe);
+
+      const result = win.__bootFailureProbe;
+      const same = (actual, expected) => JSON.stringify(actual) === JSON.stringify(expected);
+      return verify({
+        failedFeatureReported: result?.failed === false,
+        laterFeatureStarted: result?.continued === true,
+        partialFeatureCleaned: same(result?.calls?.slice(0, 4), [
+          'init:failed', 'destroy:failed', 'init:continued', 'destroy:continued',
+        ]),
+        createFailureIsolated: result?.calls?.includes('init:created') && result?.calls?.includes('destroy:created'),
+        retryWasAvailable: result?.retryWasAvailable,
+        retrySucceeded: result?.retrySucceeded,
+        failuresLogged: result?.logs?.some(line => line.includes('failed-init start failed')) &&
+          result?.logs?.some(line => line.includes('failed-create create failed')) &&
+          result?.logs?.some(line => line.includes('boot failed')),
       });
     },
   },

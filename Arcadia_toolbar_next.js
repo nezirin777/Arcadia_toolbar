@@ -7,7 +7,7 @@
 // @include      https://www.mai-net.net/bbs/*
 // @include      http://mai-net.ath.cx/bbs/*
 // @include      https://mai-net.ath.cx/bbs/*
-// @version      5.11
+// @version      5.12
 // ==/UserScript==
 
 
@@ -51,7 +51,7 @@
 
 'use strict';
 
-const ATB_VERSION = '5.11';
+const ATB_VERSION = '5.12';
 const ATB_LINEBREAK_REVISION = 'paragraph-boundary-v3';
 
 /* ==================================================
@@ -3870,10 +3870,21 @@ class FeatureRuntime {
   #cleanups = [];
   #isDestroyed = false;
 
-  start(feature, method = 'init') {
-    if (this.#isDestroyed) return;
-    feature[method]();
-    if (typeof feature.destroy === 'function') this.#features.push(feature);
+  start(feature, method = 'init', id = feature?.constructor?.name || 'unknown') {
+    if (this.#isDestroyed) return false;
+    try {
+      if (typeof feature?.[method] !== 'function') {
+        throw new TypeError(`${id}.${method} is not a function`);
+      }
+      feature[method]();
+      if (typeof feature.destroy === 'function') this.#features.push(feature);
+      return true;
+    } catch (error) {
+      try { feature?.destroy?.(); }
+      catch (cleanupError) { console.error(`[FeatureRuntime] ${id} cleanup after start failure failed:`, cleanupError); }
+      console.error(`[FeatureRuntime] ${id} start failed:`, error);
+      return false;
+    }
   }
 
   addCleanup(cleanup) {
@@ -3973,10 +3984,15 @@ function selectFeatureDefinitions(ctx, route) {
 }
 
 /** boot - 現在の経路に対応するFeatureを登録順に起動する。 */
-function boot(ctx, runtime) {
+function boot(ctx, runtime, definitions = null) {
   const route = RouteManager.detect();
-  for (const definition of selectFeatureDefinitions(ctx, route)) {
-    runtime.start(definition.create(ctx, route), definition.method);
+  const selected = definitions ?? selectFeatureDefinitions(ctx, route);
+  for (const definition of selected) {
+    try {
+      runtime.start(definition.create(ctx, route), definition.method, definition.id);
+    } catch (error) {
+      console.error(`[FeatureRuntime] ${definition.id} create failed:`, error);
+    }
   }
 }
 
@@ -3990,30 +4006,35 @@ function main() {
   document.documentElement.dataset.arcadiaLinebreakRevision = ATB_LINEBREAK_REVISION;
 
   const runtime = new FeatureRuntime();
-  runtime.addCleanup(EventBus.bridgeWindowEvents());
+  try {
+    runtime.addCleanup(EventBus.bridgeWindowEvents());
 
-  const configManager = new ConfigManager(CONFIG);
-  const config        = configManager.load();
-  const domCache      = new DOMCache(); // 修正：共通のDOMCacheを生成してParserに注入
-  const parser        = new ArcadiaDOMParser(domCache);
-  const favMatcher    = new FavoriteMatcher();
-  const ngMatcher     = new NGMatcher();
-  const themeManager  = new ThemeManager();
+    const configManager = new ConfigManager(CONFIG);
+    const config        = configManager.load();
+    const domCache      = new DOMCache(); // 修正：共通のDOMCacheを生成してParserに注入
+    const parser        = new ArcadiaDOMParser(domCache);
+    const favMatcher    = new FavoriteMatcher();
+    const ngMatcher     = new NGMatcher();
+    const themeManager  = new ThemeManager();
 
-  const favorites = StorageManager.getFavorites(config.favorites);
-  favMatcher.load(favorites);
-  ngMatcher.load(favorites.blocked);
+    const favorites = StorageManager.getFavorites(config.favorites);
+    favMatcher.load(favorites);
+    ngMatcher.load(favorites.blocked);
 
-  runtime.addCleanup(EventBus.on('arcadia:favorites-updated', data => {
-    const updated = data?.favorites ?? StorageManager.getFavorites(config.favorites);
-    favMatcher.load(updated);
-    ngMatcher.load(updated.blocked);
-  }));
+    runtime.addCleanup(EventBus.on('arcadia:favorites-updated', data => {
+      const updated = data?.favorites ?? StorageManager.getFavorites(config.favorites);
+      favMatcher.load(updated);
+      ngMatcher.load(updated.blocked);
+    }));
 
-  boot({ config, parser, domCache, favMatcher, ngMatcher, themeManager, configManager }, runtime);
+    boot({ config, parser, domCache, favMatcher, ngMatcher, themeManager, configManager }, runtime);
 
-  console.info(`[ArcadiaToolBarNext] v${ATB_VERSION} boot OK`);
-  return runtime;
+    console.info(`[ArcadiaToolBarNext] v${ATB_VERSION} boot OK`);
+    return runtime;
+  } catch (error) {
+    runtime.destroy();
+    throw error;
+  }
 }
 
 /* --------------------------------------------------
@@ -4028,9 +4049,16 @@ let booted = false;
 let appRuntime = null;
 
 function safeBoot() {
-  if (booted) return;
-  booted = true;
-  appRuntime = main();
+  if (booted) return true;
+  try {
+    appRuntime = main();
+    booted = true;
+    return true;
+  } catch (error) {
+    appRuntime = null;
+    console.error('[ArcadiaToolBarNext] boot failed:', error);
+    return false;
+  }
 }
 
 if (document.readyState === 'loading') {
@@ -4040,7 +4068,7 @@ if (document.readyState === 'loading') {
 }
 
 window.addEventListener('pageshow', e => {
-  if (e.persisted) safeBoot();
+  if (e.persisted || !booted) safeBoot();
 }, { once: true });
 
 window.addEventListener('pagehide', e => {
