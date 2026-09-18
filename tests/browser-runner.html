@@ -1334,11 +1334,33 @@ const TESTS = [
       return linebreakOnlyPassed &&
         combined?.querySelectorAll('br').length === 4 &&
         combined.textContent === '「最初の会話」　地の文の末尾、「次の会話」' &&
-        doc.documentElement.dataset.arcadiaToolbarVersion === '5.10' &&
+        doc.documentElement.dataset.arcadiaToolbarVersion === '5.11' &&
         doc.documentElement.dataset.arcadiaLinebreakRevision === 'paragraph-boundary-v3' &&
         doc.documentElement.dataset.arcadiaActiveFormats === 'linebreak,spacing,indent,wordWrap,insertspace' &&
         doc.documentElement.dataset.arcadiaLinebreakRemoved === '2' &&
         !doc.querySelector('#style-format-status');
+    },
+  },
+  {
+    id: 'T-75', fixture: 'ss-article-first.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10001&n=0&count=1',
+    label: 'SS閲覧上部の記事リンクを一覧と同じダークテーマのホバー色で表示',
+    check(doc, win) {
+      const rules = Array.from(doc.querySelector('#atb-theme')?.sheet?.cssRules || []);
+      const articleHover = rules.find(rule => rule.selectorText === '#table tr:hover > td');
+      const listHover = rules.find(rule => rule.selectorText === '.ss-list-table-cell tr.bgc:hover td');
+      doc.querySelector('#theme-toggle-button')?.click();
+      const theme = win.getComputedStyle(doc.documentElement);
+      return verify({
+        darkTheme: doc.documentElement.dataset.theme === 'dark',
+        articleRule: !!articleHover,
+        sameBackground: articleHover?.style.getPropertyValue('background-color') ===
+          listHover?.style.getPropertyValue('background-color'),
+        sameText: articleHover?.style.getPropertyValue('color') ===
+          listHover?.style.getPropertyValue('color'),
+        overridesSiteColor: articleHover?.style.getPropertyPriority('background-color') === 'important',
+        darkBackground: theme.getPropertyValue('--ss-hover-bg').trim() === '#3d3630',
+        darkText: theme.getPropertyValue('--ss-hover-text').trim() === '#ffffff',
+      });
     },
   },
 ];

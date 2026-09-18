@@ -7,7 +7,7 @@
 // @include      https://www.mai-net.net/bbs/*
 // @include      http://mai-net.ath.cx/bbs/*
 // @include      https://mai-net.ath.cx/bbs/*
-// @version      5.10
+// @version      5.11
 // ==/UserScript==
 
 
@@ -51,7 +51,7 @@
 
 'use strict';
 
-const ATB_VERSION = '5.10';
+const ATB_VERSION = '5.11';
 const ATB_LINEBREAK_REVISION = 'paragraph-boundary-v3';
 
 /* ==================================================
@@ -1192,6 +1192,7 @@ const CSS_DEFS = {
     a:hover          { text-decoration:underline; }
     .ss-list-table-cell tr.bgc   { transition:background-color 0.2s ease; }
     .main-list-table-cell tr.bgc { transition:background-color 0.2s ease; }
+    #table tr > td                  { transition:background-color 0.2s ease; }
     input[type="text"]   { background-color:var(--ss-input-bg); color:var(--ss-input-text); border:1px solid var(--ss-input-border); padding:4px; border-radius:3px; }
     input[type="submit"] { background-color:var(--ss-button-bg); color:var(--ss-button-text); border:1px solid var(--ss-input-border); padding:4px 12px; border-radius:3px; cursor:pointer; transition:background-color 0.2s ease; }
     input[type="submit"]:hover { background-color:var(--ss-hover-bg); color:var(--ss-hover-text); }
@@ -1200,6 +1201,7 @@ const CSS_DEFS = {
     .main-list-table-cell, .bgc, .brdr .bgc { background-color:var(--ss-list-bg) !important; color:var(--ss-text-color) !important; }
     td.bga, tr.bga td, .bgb, .bgb * { background-color:var(--ss-header-bg) !important; color:var(--ss-header-text) !important; border:1px solid var(--ss-border-color); border-width:1px 0; font-weight:bold; }
     .ss-list-table-cell tr.bgc:hover td   { background-color:var(--ss-hover-bg) !important; color:var(--ss-hover-text) !important; }
+    #table tr:hover > td                   { background-color:var(--ss-hover-bg) !important; color:var(--ss-hover-text) !important; }
     .ss-list-table-cell tr.bgc.list-favorite-primary td   { background-color:var(--list-favorite-primary) !important; }
     .ss-list-table-cell tr.bgc.list-favorite-secondary td { background-color:var(--list-favorite-secondary) !important; }
     .ss-list-table-cell tr.bgc.list-favorite-watching td  { background-color:var(--list-favorite-watching) !important; }
