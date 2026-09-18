@@ -64,6 +64,29 @@ const findSearchTable = (doc, text) =>
 
 const valueOf = (form, name) => form?.querySelector(`[name="${name}"]`)?.value ?? null;
 
+const EXPECTED_COMMENT_PAGE_LABELS = [
+  '[0001-]', '[0020-]', '[0040-]', '[0060-]', '[0080-]', '[0100-]',
+  '[0120-]', '[0140-]', '[0160-]', '[0180-]', '[0200-]',
+];
+
+function getPaginationState(doc) {
+  const tables = Array.from(doc.querySelectorAll('.ss-pagination-table'));
+  const labelsByTable = tables.map(table =>
+    table.querySelector('.ss-pagination-links')?.textContent.match(/\[\d{4}-\]/g) || []
+  );
+  const firstLinks = Array.from(tables[0]?.querySelectorAll('.ss-pagination-links a') || []);
+  const byLabel = new Map(firstLinks.map(link => [link.textContent.trim(), link]));
+  return { tables, labelsByTable, byLabel };
+}
+
+function hasPaginationTarget(link, page, total) {
+  if (!link) return false;
+  const url = new URL(link.href);
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
+  return url.searchParams.get('page') === String(page) &&
+    hashParams.get('atb-comment-max') === String(total);
+}
+
 function verify(checks) {
   const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name);
   return { passed: failed.length === 0, detail: failed.length ? `失敗: ${failed.join(', ')}` : '' };
@@ -1228,6 +1251,72 @@ const TESTS = [
       });
     },
   },
+  {
+    id: 'T-70', fixture: 'ss-search-chiraura.html', route: '/bbs/sst/sst.php?act=search&cate=tiraura&words=fixture&page=1',
+    label: 'チラシの裏検索で既存の感想・PV列を重複・上書きしない',
+    check(doc) {
+      const table = doc.querySelector('#sslist_table');
+      const favorite = findRow(doc, '習作の検索結果');
+      const headers = Array.from(table?.rows[0]?.cells || []).map(cell => cell.textContent.trim());
+      const dataRows = Array.from(table?.querySelectorAll('tr.bgc') || []);
+      return verify({
+        table: !!table,
+        headers: JSON.stringify(headers) === JSON.stringify(['NO.', 'タイトル', '投稿者', '記事', '感想', 'PV', '更新']),
+        sevenColumns: dataRows.length === 2 && dataRows.every(row => row.cells.length === 7),
+        favorite: favorite?.classList.contains('list-favorite-primary'),
+        blocked: findRow(doc, '検索用作品B')?.classList.contains('list-blocked'),
+        articleLink: favorite?.cells[3]?.querySelector('a[href*="act=all_msg"]')?.textContent.trim() === '3',
+        impressionLink: favorite?.cells[4]?.querySelector('a[href*="act=impression"]')?.textContent.trim() === '2',
+        pvPreserved: favorite?.cells[5]?.textContent.trim() === '300',
+      });
+    },
+  },
+  {
+    id: 'T-71', fixture: 'impression-pagination-latest.html', route: '/bbs/sst/sst.php?act=impression&cate=all&no=40001&page=1',
+    label: '感想最新ページから全ページのラベルと基準番号を生成',
+    check(doc) {
+      const state = getPaginationState(doc);
+      return verify({
+        twoPagers: state.tables.length === 2,
+        sameLabels: state.labelsByTable.length === 2 && state.labelsByTable.every(labels =>
+          JSON.stringify(labels) === JSON.stringify(EXPECTED_COMMENT_PAGE_LABELS)
+        ),
+        olderTarget: hasPaginationTarget(state.byLabel.get('[0180-]'), 2, 219),
+        oldestTarget: hasPaginationTarget(state.byLabel.get('[0001-]'), 11, 219),
+        currentIsPlainText: !state.byLabel.has('[0200-]'),
+      });
+    },
+  },
+  {
+    id: 'T-72', fixture: 'impression-pagination-older.html', route: '/bbs/sst/sst.php?act=impression&cate=all&no=40001&page=2',
+    label: '過去ページ直接表示でも最新基準のページ構成を復元',
+    check(doc) {
+      const state = getPaginationState(doc);
+      return verify({
+        sameLabels: state.labelsByTable.length === 2 && state.labelsByTable.every(labels =>
+          JSON.stringify(labels) === JSON.stringify(EXPECTED_COMMENT_PAGE_LABELS)
+        ),
+        currentIsPlainText: !state.byLabel.has('[0180-]'),
+        oldestTarget: hasPaginationTarget(state.byLabel.get('[0001-]'), 11, 219),
+        latestTarget: hasPaginationTarget(state.byLabel.get('[0200-]'), 1, 219),
+      });
+    },
+  },
+  {
+    id: 'T-73', fixture: 'impression-pagination-oldest.html', route: '/bbs/sst/sst.php?act=impression&cate=all&no=40001&page=11#atb-comment-max=219',
+    label: '生成リンク経由の最古ページでもラベルと遷移先を維持',
+    check(doc) {
+      const state = getPaginationState(doc);
+      return verify({
+        sameLabels: state.labelsByTable.length === 2 && state.labelsByTable.every(labels =>
+          JSON.stringify(labels) === JSON.stringify(EXPECTED_COMMENT_PAGE_LABELS)
+        ),
+        currentIsPlainText: !state.byLabel.has('[0001-]'),
+        olderTarget: hasPaginationTarget(state.byLabel.get('[0180-]'), 2, 219),
+        latestTarget: hasPaginationTarget(state.byLabel.get('[0200-]'), 1, 219),
+      });
+    },
+  },
 ];
 
 function saveStorage() {
@@ -1349,7 +1438,7 @@ document.getElementById('run').addEventListener('click', async event => {
       if (outcome.passed) ok++;
     }
 
-    const partial = ['T-01', 'T-02', 'T-03', 'T-09', 'T-11', 'T-64', 'T-65', 'T-66', 'T-67', 'T-68', 'T-69']
+    const partial = ['T-01', 'T-02', 'T-03', 'T-09', 'T-11', 'T-64', 'T-65', 'T-66', 'T-67', 'T-68', 'T-69', 'T-70']
       .every(id => outcomes.get(id)?.passed);
     const t14 = { id: 'T-14', fixture: '一覧・検索結果', label: 'お気に入り・NGのタイトル部分一致' };
     addResult(t14, partial ? 'OK' : 'NG', partial ? '' : '関連する一覧テストに失敗');

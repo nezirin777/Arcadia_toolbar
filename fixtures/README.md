@@ -14,12 +14,16 @@
 | `ss-list-chiraura.html` | チラシの裏の一覧 |
 | `ss-search.html` | SS投稿掲示板の検索結果（MENU列なし） |
 | `ss-search-18.html` | 18禁SS掲示板の検索結果（元作品・MENU列なし） |
+| `ss-search-chiraura.html` | チラシの裏の検索結果（感想・PV列あり） |
 | `ss-article-first.html` | SS単話表示・第1話 |
 | `ss-article-middle.html` | SS単話表示・中間話 |
 | `ss-article-last.html` | SS単話表示・最終話 |
 | `ss-article-formatting.html` | SS本文の体裁整形5機能 |
 | `ss-article-all.html` | SS全話表示 |
 | `impression.html` | 感想ページ |
+| `impression-pagination-latest.html` | 11ページある感想の最新ページ |
+| `impression-pagination-older.html` | 同じ作品の2ページ目 |
+| `impression-pagination-oldest.html` | 同じ作品の最古ページ |
 | `main-list.html` | メイン掲示板の一覧 |
 | `main-search.html` | メイン掲示板の検索結果（1件1table） |
 | `main-article.html` | メイン掲示板の記事 |

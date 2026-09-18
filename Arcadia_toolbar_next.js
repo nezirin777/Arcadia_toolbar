@@ -7,7 +7,7 @@
 // @include      https://www.mai-net.net/bbs/*
 // @include      http://mai-net.ath.cx/bbs/*
 // @include      https://mai-net.ath.cx/bbs/*
-// @version      5.03
+// @version      5.05
 // ==/UserScript==
 
 
@@ -670,7 +670,7 @@ class ArcadiaDOMParser {
    * SS一覧の1行をパースして構造化データを返す。
    *
    * @param {HTMLTableRowElement} row  tr.bgc 要素
-   * @param {boolean} isChiraura       チラシの裏カテゴリかどうか
+   * @param {boolean} usesChirauraListLayout  PV列のないチラシの裏一覧構造かどうか
    * @returns {SSRowData|null}
    *
    * @typedef {object} SSRowData
@@ -683,7 +683,7 @@ class ArcadiaDOMParser {
    * @property {boolean}     hasDirectLink  直リンク用 all= リンクがあるか
    * @property {Element[]}   bElements      row 内の全 <b> 要素
    */
-  parseSSRow(row, isChiraura = false) {
+  parseSSRow(row, usesChirauraListLayout = false) {
     // タイトルtdの特定: セルインデックスではなく all= リンクを含む td を探す
     //
     // カテゴリ別の実際のセル構造（menuCell抜き取り後）:
@@ -708,9 +708,10 @@ class ArcadiaDOMParser {
     // <b> 要素群: row 全体から取得
     const bElements = Array.from(row.getElementsByTagName('b'));
 
-    // チラ裏は記事数bのみ / 通常は 記事数・感想数・PV の3つ
+    // チラ裏の通常一覧は記事数bのみ。チラ裏検索を含む検索結果は
+    // 記事数・感想数・PVを持つため、通常のSS検索と同じ構造として扱う。
     let articleCount = 0, impressionCount = 0, pv = 0;
-    if (!isChiraura && bElements.length >= 3) {
+    if (!usesChirauraListLayout && bElements.length >= 3) {
       // Arcadia: b[last-2]=記事数, b[last-1]=感想数, b[last]=PV
       articleCount    = this.#toInt(bElements[bElements.length - 3]?.textContent);
       impressionCount = this.#toInt(bElements[bElements.length - 2]?.textContent);
@@ -1850,15 +1851,15 @@ class CommentRenderer {
   /**
    * ページネーション table 要素を生成して返す。
    * @param {object} opts
-   * @param {number} opts.totalComments  コメント総数
+   * @param {number} opts.latestCommentNumber  最新の感想番号（ページラベルの基準）
    * @param {number} opts.currentPage    現在のページ番号
    * @param {string} opts.articleId      記事ID
    * @returns {HTMLTableElement|null}
    */
-  buildPagination({ totalComments, currentPage, articleId }) {
-    if (!totalComments) return null;
+  buildPagination({ latestCommentNumber, currentPage, articleId }) {
+    if (!latestCommentNumber) return null;
 
-    const totalPages = Math.ceil(totalComments / 20);
+    const totalPages = Math.ceil(latestCommentNumber / 20);
 
     const table   = el('table', { class: 'ss-pagination-table' });
     const row     = table.insertRow();
@@ -1867,7 +1868,7 @@ class CommentRenderer {
     const tdNew   = el('td', { class: 'ss-pagination-latest', text: '→最新' });
 
     for (let page = totalPages; page >= 1; page--) {
-      const startComment = Math.max(totalComments - 20 * page + 1, 1);
+      const startComment = Math.max(latestCommentNumber - 20 * page + 1, 1);
       const label = `[${String(startComment).padStart(4, '0')}-]`;
 
       if (page !== totalPages) tdLinks.appendChild(safeText('  '));
@@ -1876,7 +1877,7 @@ class CommentRenderer {
         tdLinks.appendChild(safeText(label));
       } else {
         tdLinks.appendChild(el('a', {
-          href: this.#pageUrl(articleId, page),
+          href: this.#pageUrl(articleId, page, latestCommentNumber),
           text: label,
         }));
       }
@@ -1887,12 +1888,14 @@ class CommentRenderer {
   }
 
   /** 感想ページの URL を生成する */
-  #pageUrl(articleId, page) {
+  #pageUrl(articleId, page, latestCommentNumber) {
     const url = new URL('/bbs/sst/sst.php', location.origin);
     url.searchParams.set('act',  'impression');
     url.searchParams.set('cate', 'all');
     url.searchParams.set('no',   articleId);
     url.searchParams.set('page', String(page));
+    // Arcadia側へ未知パラメータを送らず、遷移先でも基準番号を保持する。
+    url.hash = new URLSearchParams({ 'atb-comment-max': String(latestCommentNumber) }).toString();
     return url.toString();
   }
 }
@@ -1915,19 +1918,33 @@ class CommentPageFormatter {
     this.#renderer = new CommentRenderer();
   }
 
-  /** URL から記事ID と現在ページ番号を取得 */
+  /** URL から記事ID、現在ページ番号、ページ間で引き継いだ基準番号を取得 */
   #getPageInfo() {
     const params = new URLSearchParams(location.search);
+    const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const maxHint = parseInt(hashParams.get('atb-comment-max'), 10);
     return {
       articleId:   params.get('no'),
       currentPage: parseInt(params.get('page'), 10) || 1,
+      maxHint:     Number.isSafeInteger(maxHint) && maxHint > 0 ? maxHint : 0,
     };
   }
 
-  /** コメント総数を table テキストから抽出 */
-  #extractTotalComments(commentTable) {
-    const m = (commentTable.textContent || '').match(/\[(\d+)\]/);
-    return m ? parseInt(m[1], 10) : 0;
+  /**
+   * 現在ページの感想番号から、最新ページ基準の最大番号を復元する。
+   * 生成リンク経由では hash の基準値を引き継ぎ、どの順番で開いてもラベルを固定する。
+   */
+  #extractLatestCommentNumber(commentTable, currentPage, maxHint) {
+    const commentNumbers = Array.from(commentTable.querySelectorAll('b'), node => {
+      const match = (node.textContent || '').match(/^\s*\[(\d+)\]/);
+      return match ? parseInt(match[1], 10) : 0;
+    }).filter(number => Number.isSafeInteger(number) && number > 0);
+
+    if (!commentNumbers.length) return maxHint;
+
+    const visibleMax = Math.max(...commentNumbers);
+    const estimatedMax = visibleMax + 20 * Math.max(currentPage - 1, 0);
+    return Math.max(maxHint, estimatedMax);
   }
 
   init() {
@@ -1940,8 +1957,8 @@ class CommentPageFormatter {
     try {
       ensureStyleElement('atb-comment', CSS_DEFS.comment);
 
-      const { articleId, currentPage } = this.#getPageInfo();
-      const totalComments = this.#extractTotalComments(commentTable);
+      const { articleId, currentPage, maxHint } = this.#getPageInfo();
+      const latestCommentNumber = this.#extractLatestCommentNumber(commentTable, currentPage, maxHint);
 
       // commentTable 本体を直接加工する
       // （cloneして replaceWith すると <table> 外枠が消えて横幅が破壊されるため）
@@ -1964,7 +1981,7 @@ class CommentPageFormatter {
         // ページネーション埋め込み
         if (this.#config.board?.embedPageLinks && articleId) {
           const pagination = this.#renderer.buildPagination({
-            totalComments,
+            latestCommentNumber,
             currentPage,
             articleId,
           });
@@ -2312,13 +2329,13 @@ class ListRenderer {
     row.classList.toggle('list-base-style', !!this.#config.ssList?.adjustLineHeight);
   }
 
-  applyDirectLinks(row, rowData, isChiraura) {
+  applyDirectLinks(row, rowData, usesChirauraListLayout) {
     if (!this.#config.ssList?.directLinks) return;
     if (!rowData.hasDirectLink || !rowData.articleId) return;
     if (!row.classList.contains('bgc')) return;
     const { articleId, bElements } = rowData;
 
-    if (isChiraura) {
+    if (usesChirauraListLayout) {
       // 記事数 <b>（bElements[-1]）をall_msgリンクに差し替える（v3準拠）
       // チラ裏: b[0]=タイトルb(dumpリンク含む), b[-1]=記事数b("N")
       // 記事数の数字がクリックで全話ページに飛ぶリンクになる
@@ -2541,10 +2558,13 @@ class ListFormatter {
 
   #detectPageInfo() {
     const params = new URLSearchParams(location.search);
+    const isChiraura = params.get('cate') === 'tiraura';
+    const isSearch = params.get('act') === 'search';
     return {
       isCategory18: params.get('cate') === '18',
-      isChiraura:   params.get('cate') === 'tiraura',
-      isSearch:     params.get('act') === 'search',
+      isChiraura,
+      isSearch,
+      usesChirauraListLayout: isChiraura && !isSearch,
       isList:       params.get('act') === 'list' || params.get('act') === 'search',
     };
   }
@@ -2553,14 +2573,14 @@ class ListFormatter {
     if (this.#pageType !== 'ssList') return false;
     const cfg   = this.#config.ssList;
     const isAd  = cfg.hideAdsShort && rowData.articleCount - 1 < cfg.adsThreshold && index > 3;
-    const isLow = !this.#pageInfo.isChiraura &&
+    const isLow = !this.#pageInfo.usesChirauraListLayout &&
       cfg.hideLowPv && rowData.pvPerArticle < cfg.pvThreshold;
     return isAd || isLow;
   }
 
   #processRow(row, index) {
     const rowData = this.#pageType === 'ssList'
-      ? this.#parser.parseSSRow(row, this.#pageInfo.isChiraura)
+      ? this.#parser.parseSSRow(row, this.#pageInfo.usesChirauraListLayout)
       : this.#parser.parseMainRow(row);
     if (!rowData) return;
 
@@ -2581,8 +2601,8 @@ class ListFormatter {
     if (shouldHideSpam || shouldHideByListRule) return;
 
     if (this.#pageType === 'ssList' && row.classList.contains('bgc')) {
-      this.#renderer.applyDirectLinks(row, rowData, this.#pageInfo.isChiraura);
-      if (!this.#pageInfo.isChiraura) this.#renderer.applyPvRatio(row, rowData);
+      this.#renderer.applyDirectLinks(row, rowData, this.#pageInfo.usesChirauraListLayout);
+      if (!this.#pageInfo.usesChirauraListLayout) this.#renderer.applyPvRatio(row, rowData);
     }
   }
 
@@ -2604,7 +2624,7 @@ class ListFormatter {
 
   #prepareTable(table) {
     this.#renderer.appendUnhideButton(table, this.#pageType);
-    if (this.#pageType === 'ssList' && this.#pageInfo.isChiraura &&
+    if (this.#pageType === 'ssList' && this.#pageInfo.usesChirauraListLayout &&
         this.#pageInfo.isList && this.#config.ssList?.directLinks) {
       this.#renderer.appendImpressionHeader(table);
     }
@@ -3958,7 +3978,7 @@ function main() {
 
   boot({ config, parser, domCache, favMatcher, ngMatcher, themeManager, configManager }, runtime);
 
-  console.info('[ArcadiaToolBarNext] v5.03 boot OK');
+  console.info('[ArcadiaToolBarNext] v5.05 boot OK');
   return runtime;
 }
 
