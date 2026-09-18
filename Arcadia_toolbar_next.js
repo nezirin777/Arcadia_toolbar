@@ -7,7 +7,7 @@
 // @include      https://www.mai-net.net/bbs/*
 // @include      http://mai-net.ath.cx/bbs/*
 // @include      https://mai-net.ath.cx/bbs/*
-// @version      5.05
+// @version      5.10
 // ==/UserScript==
 
 
@@ -50,6 +50,9 @@
  * ================================================== */
 
 'use strict';
+
+const ATB_VERSION = '5.10';
+const ATB_LINEBREAK_REVISION = 'paragraph-boundary-v3';
 
 /* ==================================================
  * CONFIG
@@ -2707,7 +2710,7 @@ const STYLE_BAR_STYLE_KEYS = Object.freeze([
   'width', 'lineHeight', 'fontSize', 'fontFamily', 'color', 'backgroundColor',
 ]);
 const STYLE_BAR_FORMAT_KEYS = Object.freeze([
-  'spacing', 'indent', 'linebreak', 'wordWrap', 'insertspace',
+  'linebreak', 'spacing', 'indent', 'wordWrap', 'insertspace',
 ]);
 
 /** SS本文の原文を保持し、選択された整形だけを一方向に適用する。 */
@@ -2775,14 +2778,23 @@ class ArticleContentFormatter {
 
   #formatLinebreak(root) {
     const excluded = new Set(Array.from('。., 」"\'》』)）】≫＞>｣…―・！？!?'));
-    root.querySelectorAll('br').forEach(br => {
+    const opening = new Set(Array.from('＜【「『《≪（(｢'));
+    const removableBreaks = Array.from(root.querySelectorAll('br')).filter(br => {
       if (br[ArticleContentFormatter.#PRESERVE_BREAK]) return;
-      const text = br.previousSibling;
-      if (text?.nodeType !== Node.TEXT_NODE) return;
-      const chars = Array.from(text.data);
+      const before = br.previousSibling;
+      const after = br.nextSibling;
+      if (before?.nodeType !== Node.TEXT_NODE || after?.nodeType !== Node.TEXT_NODE) return;
+      if (!before.data.trim() || !after.data.trim()) return;
+      const chars = Array.from(before.data.trimEnd());
       const last = chars[chars.length - 1];
-      if (last && !excluded.has(last)) br.remove();
+      const next = Array.from(after.data.trimStart())[0];
+      const startsIndentedParagraph = /^[　]/.test(after.data);
+      const startsDialogue = opening.has(next);
+      return last && !excluded.has(last) && !startsIndentedParagraph && !startsDialogue;
     });
+
+    removableBreaks.forEach(br => br.remove());
+    return removableBreaks.length;
   }
 
   #formatWordWrap(root) {
@@ -2828,21 +2840,26 @@ class ArticleContentFormatter {
 
   #applyFormat(root, key) {
     switch (key) {
-      case 'spacing':     this.#formatSpacing(root); break;
-      case 'indent':      this.#formatIndent(root); break;
-      case 'linebreak':   this.#formatLinebreak(root); break;
-      case 'wordWrap':    this.#formatWordWrap(root); break;
-      case 'insertspace': this.#formatInsertspace(root); break;
+      case 'spacing':     this.#formatSpacing(root); return 0;
+      case 'indent':      this.#formatIndent(root); return 0;
+      case 'linebreak':   return this.#formatLinebreak(root);
+      case 'wordWrap':    this.#formatWordWrap(root); return 0;
+      case 'insertspace': this.#formatInsertspace(root); return 0;
+      default: return 0;
     }
   }
 
   apply(formats) {
-    if (!this.#content || this.#originalContent === null) return;
+    const diagnostics = { linebreakRemoved: 0 };
+    if (!this.#content || this.#originalContent === null) return diagnostics;
     const nextContent = this.#originalContent.cloneNode(true);
     for (const key of STYLE_BAR_FORMAT_KEYS) {
-      if (formats[key]) this.#applyFormat(nextContent, key);
+      if (!formats[key]) continue;
+      const changed = this.#applyFormat(nextContent, key);
+      if (key === 'linebreak') diagnostics.linebreakRemoved = changed;
     }
     this.#content.replaceChildren(nextContent);
+    return diagnostics;
   }
 }
 
@@ -2971,7 +2988,17 @@ class StyleControlBar {
       key,
       !!this.#bar.querySelector(`#format-${key}`)?.checked,
     ]));
-    this.#formatter.apply(formats);
+    const diagnostics = this.#formatter.apply(formats);
+    const activeFormats = STYLE_BAR_FORMAT_KEYS.filter(key => formats[key]);
+    const activeValue = activeFormats.join(',') || 'none';
+
+    this.#bar.querySelectorAll('input[id^="format-"]').forEach(cb => {
+      cb.toggleAttribute('checked', cb.checked);
+    });
+    this.#bar.dataset.activeFormats = activeValue;
+    this.#bar.dataset.linebreakRemoved = String(diagnostics.linebreakRemoved);
+    document.documentElement.dataset.arcadiaActiveFormats = activeValue;
+    document.documentElement.dataset.arcadiaLinebreakRemoved = String(diagnostics.linebreakRemoved);
   }
 
   #saveSettings() {
@@ -3083,6 +3110,8 @@ class StyleControlBar {
     ];
     const ae  = this.#state.defaultFormats;
     const bar = el('div', { id: 'style-control-bar', class: 'bar_bas' });
+    bar.dataset.atbVersion = ATB_VERSION;
+    bar.dataset.linebreakRevision = ATB_LINEBREAK_REVISION;
     bar.append(
       this.#buildSelect('style-width',          '横幅',       this.#pctOptions(60, 5, 9),   d.width),
       this.#buildSelect('style-lineHeight',      '行間',       this.#pctOptions(100, 25, 9), d.lineHeight),
@@ -3090,12 +3119,12 @@ class StyleControlBar {
       this.#buildSelect('style-fontFamily',      'フォント',   FONT_OPTS,                    d.fontFamily),
       this.#buildSelect('style-color',           '文字色',     COLOR_OPTS,                   d.color),
       this.#buildSelect('style-backgroundColor', '背景色',     BG_OPTS,                      d.backgroundColor),
+      this.#buildCheckbox('format-linebreak',   '不要改行削除', '段落内の不要な改行を削除します', ae.linebreak),
+      document.createElement('br'),
       this.#buildCheckbox('format-spacing',     '空行', '空行を整理します',           ae.spacing),
       this.#buildCheckbox('format-indent',      '行頭', '段落の頭を下げます',         ae.indent),
       document.createElement('br'),
-      this.#buildCheckbox('format-linebreak',   '改行', '不要な改行を削除します',     ae.linebreak),
       this.#buildCheckbox('format-wordWrap',    '連字', 'テーブル横幅破壊の回避',     ae.wordWrap),
-      document.createElement('br'),
       this.#buildCheckbox('format-insertspace', '挿行', '会話と地の文の間に空行挿入', ae.insertspace),
       document.createElement('br'),
       el('button', { id: 'reset-button', class: 'reset-button', text: 'デフォルトに戻す' }),
@@ -3955,6 +3984,9 @@ function boot(ctx, runtime) {
 function main() {
   if (RouteManager.handleRedirect()) return;
 
+  document.documentElement.dataset.arcadiaToolbarVersion = ATB_VERSION;
+  document.documentElement.dataset.arcadiaLinebreakRevision = ATB_LINEBREAK_REVISION;
+
   const runtime = new FeatureRuntime();
   runtime.addCleanup(EventBus.bridgeWindowEvents());
 
@@ -3978,7 +4010,7 @@ function main() {
 
   boot({ config, parser, domCache, favMatcher, ngMatcher, themeManager, configManager }, runtime);
 
-  console.info('[ArcadiaToolBarNext] v5.05 boot OK');
+  console.info(`[ArcadiaToolBarNext] v${ATB_VERSION} boot OK`);
   return runtime;
 }
 

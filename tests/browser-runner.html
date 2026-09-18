@@ -1317,6 +1317,30 @@ const TESTS = [
       });
     },
   },
+  {
+    id: 'T-74', fixture: 'ss-article-formatting.html', route: '/bbs/sst/sst.php?act=dump&cate=all&all=10002&n=0&count=1',
+    label: '体裁整形「改行」が地の文と会話の連続改行を保持',
+    check(doc) {
+      applyFormats(doc, ['linebreak']);
+      const linebreakOnly = doc.querySelector('#linebreak-paragraph-case');
+      const linebreakOnlyPassed = linebreakOnly?.querySelectorAll('br').length === 2 &&
+        linebreakOnly.textContent === '「最初の会話」　地の文の末尾、「次の会話」' &&
+        doc.querySelector('#format-linebreak')?.hasAttribute('checked') &&
+        doc.querySelector('#style-control-bar')?.dataset.activeFormats === 'linebreak' &&
+        doc.querySelector('#style-control-bar')?.dataset.linebreakRemoved === '2';
+
+      applyFormats(doc, ['spacing', 'indent', 'linebreak', 'wordWrap', 'insertspace']);
+      const combined = doc.querySelector('#linebreak-paragraph-case');
+      return linebreakOnlyPassed &&
+        combined?.querySelectorAll('br').length === 4 &&
+        combined.textContent === '「最初の会話」　地の文の末尾、「次の会話」' &&
+        doc.documentElement.dataset.arcadiaToolbarVersion === '5.10' &&
+        doc.documentElement.dataset.arcadiaLinebreakRevision === 'paragraph-boundary-v3' &&
+        doc.documentElement.dataset.arcadiaActiveFormats === 'linebreak,spacing,indent,wordWrap,insertspace' &&
+        doc.documentElement.dataset.arcadiaLinebreakRemoved === '2' &&
+        !doc.querySelector('#style-format-status');
+    },
+  },
 ];
 
 function saveStorage() {
